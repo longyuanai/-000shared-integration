@@ -1,0 +1,2 @@
+"""Cross-product correlation rules."""
+

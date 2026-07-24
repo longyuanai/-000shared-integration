@@ -1,0 +1,40 @@
+[tool.poetry]
+name = "shared-integration"
+version = "0.5.0"
+description = "Integration gateway for longyuanai AI Security Agent suite"
+authors = ["longyuanai"]
+license = "MIT"
+readme = "README.md"
+packages = [{ include = "shared_integration", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+shared-llm-core = { path = "../000shared-llm-core", develop = true }
+fastapi = "^0.115.0"
+uvicorn = "^0.30.0"
+httpx = ">=0.27,<0.28"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+pytest-asyncio = "^0.23.7"
+pytest-mock = "^3.14.0"
+
+[tool.poetry.scripts]
+shared-integration = "shared_integration.gateway:main"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--basetemp=.pytest-tmp"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+

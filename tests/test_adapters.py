@@ -1,0 +1,2 @@
+"""Product adapter tests."""
+
