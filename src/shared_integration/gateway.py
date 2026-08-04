@@ -31,9 +31,11 @@ def build_gateway(root: Path | None = None) -> IntegrationGateway:
         FindingSource.VULN: VulnAdapter(products_root / "002AI-Vulnerability-Agent"),
         FindingSource.LAB: LabAdapter(products_root / "003AI Agent安全靶场"),
         FindingSource.CODE: CodeAdapter(
-            products_root / "004AI代码审计" / "004AI-CodeGuard-upgrade"
+            products_root / "004AI-Code-Audit" / "004AI-CodeGuard-upgrade"
         ),
-        FindingSource.REVERSE: ReverseAdapter(products_root / "005AI逆向Agent"),
+        FindingSource.REVERSE: ReverseAdapter(
+            products_root / "005AI-Reverse-Agent"
+        ),
         FindingSource.FIRMWARE: FirmwareAdapter(
             products_root / "006AI-Firmware-Security-Agent"
         ),

@@ -7,8 +7,8 @@ from typing import Any
 
 import httpx
 import pytest
-
 from shared_llm_core import FindingRegistry, FindingSource, IntegrationGateway
+
 from shared_integration import gateway as gateway_module
 from shared_integration.gateway import build_gateway, suite_root
 
@@ -25,7 +25,8 @@ async def request(
 
 
 def test_suite_root_is_product_parent() -> None:
-    assert suite_root().name == "003AI+网络安全"
+    expected = Path(__file__).resolve().parents[2]
+    assert suite_root() == expected
 
 
 def test_build_gateway_returns_core_gateway(tmp_path: Path) -> None:
