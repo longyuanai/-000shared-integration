@@ -1,5 +1,7 @@
-"""Public registry binding from the frozen shared-llm-core v0.5 contract."""
+"""Registry bindings for in-memory and persistent gateway operation."""
 
 from shared_llm_core import FindingRegistry
 
-__all__ = ["FindingRegistry"]
+from shared_integration.persistence import SQLiteTenantFindingRegistry
+
+__all__ = ["FindingRegistry", "SQLiteTenantFindingRegistry"]

@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from shared_llm_core import FindingRegistry, FindingSource, IntegrationGateway
 
 from shared_integration import gateway as gateway_module
@@ -91,10 +92,15 @@ def test_module_exposes_fastapi_app() -> None:
 def test_main_runs_on_port_8080(monkeypatch: pytest.MonkeyPatch) -> None:
     called: dict[str, Any] = {}
 
-    class FakeGateway:
-        def run(self, host: str, port: int) -> None:
-            called.update(host=host, port=port)
+    def fake_run(app: FastAPI, host: str, port: int) -> None:
+        called.update(app=app, host=host, port=port)
 
-    monkeypatch.setattr(gateway_module, "build_gateway", FakeGateway)
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.setattr(gateway_module.uvicorn, "run", fake_run)
     gateway_module.main()
-    assert called == {"host": "0.0.0.0", "port": 8080}
+    assert called == {
+        "app": gateway_module.app,
+        "host": "0.0.0.0",
+        "port": 8080,
+    }

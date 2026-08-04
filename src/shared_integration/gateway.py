@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import uvicorn
 from fastapi import FastAPI
 from shared_llm_core import FindingRegistry, FindingSource, IntegrationGateway
 
@@ -15,7 +17,9 @@ from shared_integration.adapters import (
     SOCAdapter,
     VulnAdapter,
 )
+from shared_integration.auth import TenantRBACMiddleware, load_principals
 from shared_integration.correlations import SameHostMultiSourceRule
+from shared_integration.persistence import SQLiteTenantFindingRegistry
 
 
 def suite_root() -> Path:
@@ -23,9 +27,18 @@ def suite_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def build_gateway(root: Path | None = None) -> IntegrationGateway:
+def build_gateway(
+    root: Path | None = None,
+    *,
+    registry: FindingRegistry | None = None,
+    database_path: str | Path | None = None,
+) -> IntegrationGateway:
     """Compose all six subprocess adapters behind the v0.5 core gateway."""
     products_root = (root or suite_root()).resolve()
+    configured_database = database_path or os.getenv("INTEGRATION_DB_PATH")
+    finding_registry = registry
+    if finding_registry is None and configured_database:
+        finding_registry = SQLiteTenantFindingRegistry(configured_database)
     products = {
         FindingSource.SOC: SOCAdapter(products_root / "001AI-SOC-Agent"),
         FindingSource.VULN: VulnAdapter(products_root / "002AI-Vulnerability-Agent"),
@@ -42,17 +55,43 @@ def build_gateway(root: Path | None = None) -> IntegrationGateway:
     }
     return IntegrationGateway(
         products=products,
-        registry=FindingRegistry(),
+        registry=finding_registry or FindingRegistry(),
         correlations=[SameHostMultiSourceRule()],
     )
 
 
-app: FastAPI = build_gateway().app
+def build_app(
+    root: Path | None = None,
+    *,
+    registry: FindingRegistry | None = None,
+    database_path: str | Path | None = None,
+) -> FastAPI:
+    """Build the HTTP app with tenant and RBAC middleware."""
+    gateway = build_gateway(
+        root,
+        registry=registry,
+        database_path=database_path,
+    )
+    application = gateway.app
+    application.state.gateway = gateway
+    application.state.registry = gateway.registry
+    application.add_middleware(
+        TenantRBACMiddleware,
+        principals=load_principals(),
+    )
+    return application
+
+
+app: FastAPI = build_app()
 
 
 def main() -> None:
     """Run the gateway on the contract's default address."""
-    build_gateway().run(host="0.0.0.0", port=8080)
+    uvicorn.run(
+        app,
+        host=os.getenv("HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", "8080")),
+    )
 
 
 if __name__ == "__main__":

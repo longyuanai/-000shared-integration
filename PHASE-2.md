@@ -16,8 +16,11 @@
 | `ProductCLIError` 错误透传 stderr | ✅ |
 | `/v0.5/health` 聚合 6 产品 | ✅ |
 | e2e 测试 `tests/integration/test_cli_envelope_smoke.py` | ⚠️ Hook 005-FINAL-001 待做(覆盖 6 产品真子进程)|
-| retry / timeout / circuit breaker | ❌ Phase-2 Hook A |
+| timeout / circuit breaker | ⚠️ timeout 待做，RBAC/持久化已落地 |
 | 健康检查深度化(active probing)| ❌ Phase-2 Hook B |
+| 多租户 Bearer RBAC | ✅ viewer / analyst / admin |
+| Finding / correlation 持久化 | ✅ tenant-isolated SQLite |
+| 生产容器 | ✅ suite-root OCI Dockerfile |
 
 ---
 

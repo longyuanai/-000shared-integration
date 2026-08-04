@@ -5,16 +5,21 @@ Integration gateway for the longyuanai AI Security Agent suite.
 The service composes the six product CLIs behind the frozen
 `shared-llm-core` v0.5 `IntegrationGateway` contract.
 
-## Requirements
+## Current capabilities
 
-- Python 3.11+
-- The sibling `../000shared-llm-core` repository
+- six subprocess-isolated product adapters;
+- tenant-scoped bearer authentication with `viewer`, `analyst`, and `admin` roles;
+- tenant-isolated SQLite persistence for Findings and correlations;
+- SSE updates isolated by tenant;
+- an OCI image that packages the gateway and all six product CLIs.
 
-## Run
+## Local run
 
 ```powershell
 $env:PYTHONPATH = "src;../000shared-llm-core/src"
-C:\Users\15072\AppData\Local\Programs\Python\Python314\python.exe -m shared_integration.gateway
+$env:INTEGRATION_DB_PATH = ".\gateway.sqlite3"
+$env:INTEGRATION_AUTH_TOKENS = '{"local-development-token-1234":{"tenant":"local","role":"admin"}}'
+python -m shared_integration.gateway
 ```
 
 The gateway listens on port `8080` and exposes:
@@ -28,11 +33,26 @@ The gateway listens on port `8080` and exposes:
 Example health check:
 
 ```powershell
-curl.exe http://localhost:8080/v0.5/health
+curl.exe -H "Authorization: Bearer local-development-token-1234" `
+  http://localhost:8080/v0.5/findings
 ```
+
+`GET /v0.5/health` remains unauthenticated for platform probes. Other routes
+require a configured bearer token when `INTEGRATION_AUTH_TOKENS` is set.
+
+## Container deployment
+
+Build from the suite root:
+
+```powershell
+docker build -f .\000shared-integration\Dockerfile `
+  -t longyuan/integration-gateway:0.6.0 .
+```
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for volume, secret, and dashboard wiring.
 
 ## Test
 
 ```powershell
-python -m pytest tests/ --basetemp=C:/pytest-tmp/shared-integration -q --tb=no -o addopts=
+python -m pytest tests/ --basetemp=workspace/pytest-current -q -o addopts=
 ```
