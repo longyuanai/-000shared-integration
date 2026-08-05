@@ -7,7 +7,7 @@ import json
 import os
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from starlette.responses import JSONResponse
 
@@ -20,6 +20,13 @@ _PUBLIC_PATHS = {"/livez", "/v0.5/health"}
 class Principal:
     tenant_id: str
     role: str
+    scopes: frozenset[str] | None = None
+
+
+class PrincipalAuthenticator(Protocol):
+    """Resolve a bearer token to a tenant principal."""
+
+    def __call__(self, token: str) -> Principal | None: ...
 
 
 def current_tenant() -> str:
@@ -36,7 +43,7 @@ def reset_tenant(token: Token[str]) -> None:
     _tenant_id.reset(token)
 
 
-def load_principals() -> dict[str, Principal]:
+def load_principals(*, require_when_enabled: bool = True) -> dict[str, Principal]:
     """Load bearer-token principals from ``INTEGRATION_AUTH_TOKENS`` JSON."""
     raw = os.getenv("INTEGRATION_AUTH_TOKENS", "").strip()
     required = os.getenv("INTEGRATION_AUTH_REQUIRED", "").lower() in {
@@ -45,7 +52,7 @@ def load_principals() -> dict[str, Principal]:
         "yes",
     }
     if not raw:
-        if required:
+        if required and require_when_enabled:
             raise RuntimeError(
                 "INTEGRATION_AUTH_REQUIRED is enabled but INTEGRATION_AUTH_TOKENS is empty"
             )
@@ -74,9 +81,15 @@ def load_principals() -> dict[str, Principal]:
 class TenantRBACMiddleware:
     """Authenticate bearer tokens and bind tenant context for the full response."""
 
-    def __init__(self, app: Any, principals: dict[str, Principal]) -> None:
+    def __init__(
+        self,
+        app: Any,
+        principals: dict[str, Principal],
+        authenticator: PrincipalAuthenticator | None = None,
+    ) -> None:
         self.app = app
         self.principals = principals
+        self.authenticator = authenticator
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -88,7 +101,7 @@ class TenantRBACMiddleware:
             await self._call_as(Principal("_system", "viewer"), scope, receive, send)
             return
 
-        if not self.principals:
+        if not self.principals and self.authenticator is None:
             await self._call_as(Principal("default", "admin"), scope, receive, send)
             return
 
@@ -114,6 +127,12 @@ class TenantRBACMiddleware:
                 status_code=403,
             )(scope, receive, send)
             return
+        if not _scope_allows(principal, method, path):
+            await JSONResponse(
+                {"detail": "API key scope does not allow this operation"},
+                status_code=403,
+            )(scope, receive, send)
+            return
 
         await self._call_as(principal, scope, receive, send)
 
@@ -128,6 +147,14 @@ class TenantRBACMiddleware:
         for configured, principal in self.principals.items():
             if hmac.compare_digest(token, configured):
                 return principal
+        if self.authenticator is not None:
+            authenticated = self.authenticator(token)
+            if authenticated is not None:
+                return Principal(
+                    tenant_id=authenticated.tenant_id,
+                    role=authenticated.role,
+                    scopes=frozenset(getattr(authenticated, "scopes", ())),
+                )
         return None
 
     async def _call_as(
@@ -147,8 +174,26 @@ class TenantRBACMiddleware:
             reset_tenant(token)
 
 
+def _scope_allows(principal: Principal, method: str, path: str) -> bool:
+    scopes = principal.scopes
+    if scopes is None or not scopes or "gateway:*" in scopes:
+        return True
+    if path.startswith("/v1/admin/"):
+        return "gateway:admin" in scopes
+    if method in {"GET", "HEAD", "OPTIONS"}:
+        return "gateway:read" in scopes
+    if path.startswith("/v1/scans") or (
+        path.startswith("/v0.5/") and path.endswith("/scan")
+    ):
+        return "scan:write" in scopes
+    if path.startswith("/v1/findings/") and method == "PATCH":
+        return "finding:write" in scopes
+    return "gateway:write" in scopes
+
+
 __all__ = [
     "Principal",
+    "PrincipalAuthenticator",
     "TenantRBACMiddleware",
     "bind_tenant",
     "current_tenant",

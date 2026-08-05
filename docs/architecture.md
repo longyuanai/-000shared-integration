@@ -153,7 +153,7 @@ flowchart LR
 | Tenant | `id`, `slug`, `name`, `status`, `retention_days` |
 | User | `id`, `issuer`, `subject`, `email`, `display_name` |
 | Membership | `tenant_id`, `user_id`, `role` |
-| ApiKey | `tenant_id`, `key_prefix`, `secret_hash`, `scopes`, `expires_at`, `revoked_at` |
+| ApiKey | `tenant_id`, `key_prefix`, `secret_hash`, `role`, `scopes`, `expires_at`, `revoked_at` |
 | Job | `tenant_id`, `source`, `status`, `queue`, `input`, `progress`, `timeout_at`, `created_by`, `idempotency_key` |
 | JobEvent | `tenant_id`, `job_id`, `sequence`, `kind`, `payload`, `created_at` |
 | Artifact | `tenant_id`, `sha256`, `size`, `media_type`, `storage_key`, `created_by` |
@@ -302,10 +302,12 @@ HTTPS Ingress
 
 ## 14. 分阶段实施计划
 
-> 实施状态（2026-08-05）：M0/M1 代码已落地并通过单元、API、真实 SOC
-> adapter 与 Celery task 入口验证；中央锁定版本 CI 已转入
-> `000shared-llm-core/suite-lock.yml`。实际 Valkey broker 联调和六产品完整
-> CLI 套件仍是 M1 发布门禁，M2–M5 尚未开始。
+> 实施状态（2026-08-05）：M0/M1 已通过真实 Valkey、三队列、六产品
+> Worker、HTTP API 与取消迟到消息验证。M2 第一切片已落地 SQLAlchemy
+> 模型、Alembic、PostgreSQL Job/Finding/Audit 持久化、fingerprint 去重、
+> 生命周期与游标 API、SQLite 可重复导入、Tenant/User/Membership 管理、
+> 哈希 API Key 及数据库 RBAC 已落地。备份恢复实机演练和 PostgreSQL 高并发
+> 压测仍是 M2 剩余门禁；OIDC/BFF、前端真实工作流属于 M3。
 
 ### M0：契约与迁移准备
 
@@ -376,7 +378,5 @@ HTTPS Ingress
 
 ## 16. 下一步
 
-完成 M1 发布门禁：在真实 Valkey 上验证三类 Worker 队列及六产品
-queued → terminal 全链路，然后进入 M2 的 PostgreSQL、租户实体、Finding
-生命周期与审计事件。M3 再接 OIDC/BFF、真实 Dashboard 工作流和 Playwright
-多租户/RBAC E2E，避免在持久化边界尚未稳定时重做前端权限模型。
+完成 M2 剩余门禁：执行备份恢复实机演练和 PostgreSQL 高并发测试。随后进入
+M3 的 OIDC/BFF、真实 Dashboard 工作流和 Playwright 多租户/RBAC E2E。

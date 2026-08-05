@@ -12,8 +12,11 @@ model, API, RBAC, deployment topology, and M0–M5 implementation plan are in
 ## Current capabilities
 
 - six subprocess-isolated product adapters;
-- tenant-scoped bearer authentication with `viewer`, `analyst`, and `admin` roles;
-- tenant-isolated SQLite persistence for Findings and correlations;
+- persistent, scrypt-hashed API keys with tenant status, expiry, revocation,
+  scopes, and `viewer`/`analyst`/`admin` roles;
+- Tenant/User/Membership persistence plus a bootstrap and migration CLI;
+- PostgreSQL/SQLAlchemy persistence with Alembic migrations and explicit tenant keys;
+- Finding fingerprint deduplication, lifecycle status, assignment, audit, and cursor paging;
 - SSE updates isolated by tenant;
 - `/v1` persisted scan jobs with idempotency, cancellation, events, and adapter capabilities;
 - Celery/Valkey routing across `fast`, `analysis`, and `sandbox` worker queues;
@@ -24,7 +27,8 @@ model, API, RBAC, deployment topology, and M0–M5 implementation plan are in
 
 ```powershell
 $env:PYTHONPATH = "src;../000shared-llm-core/src"
-$env:INTEGRATION_DB_PATH = ".\gateway.sqlite3"
+$env:INTEGRATION_DATABASE_URL = "sqlite+pysqlite:///./gateway.sqlite3"
+$env:INTEGRATION_AUTO_CREATE_SCHEMA = "true" # local development only
 $env:INTEGRATION_AUTH_TOKENS = '{"local-development-token-1234":{"tenant":"local","role":"admin"}}'
 python -m shared_integration.gateway
 ```
@@ -40,6 +44,8 @@ The gateway listens on port `8080` and exposes:
 - `GET /v1/scans/{job_id}`
 - `POST /v1/scans/{job_id}/cancel`
 - `GET /v1/scans/{job_id}/events`
+- `GET /v1/findings`
+- `PATCH /v1/findings/{finding_id}`
 - `GET /v1/adapters`
 - `GET /livez` and authenticated `GET /readyz`
 
@@ -53,13 +59,26 @@ curl.exe -H "Authorization: Bearer local-development-token-1234" `
 `GET /v0.5/health` remains unauthenticated for platform probes. Other routes
 require a configured bearer token when `INTEGRATION_AUTH_TOKENS` is set.
 
+Production uses `INTEGRATION_AUTH_BACKEND=database`. After applying Alembic
+migrations, bootstrap the first tenant and key (the key is printed only once):
+
+```powershell
+$env:INTEGRATION_DATABASE_URL = "postgresql+psycopg://integration:...@localhost/integration"
+shared-integration-admin tenant-create --tenant longyuan --slug longyuan --name "Longyuan"
+shared-integration-admin api-key-issue --tenant longyuan --role admin --scope "gateway:*"
+```
+
+`INTEGRATION_AUTH_BACKEND=hybrid` accepts both persistent keys and the legacy
+`INTEGRATION_AUTH_TOKENS`; use it only as a rotation bridge. See
+[DEPLOYMENT.md](DEPLOYMENT.md) for SQLite migration and backup/restore steps.
+
 ## Container deployment
 
 Build from the suite root:
 
 ```powershell
 docker build -f .\000shared-integration\Dockerfile `
-  -t longyuan/integration-gateway:0.7.0 .
+  -t longyuan/integration-gateway:0.8.0 .
 ```
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for volume, secret, and dashboard wiring.

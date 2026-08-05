@@ -205,6 +205,32 @@ class SQLiteJobRepository:
             ).fetchone()
         return _job_from_row(row) if row is not None else None
 
+    def list_jobs(
+        self,
+        tenant_id: str,
+        *,
+        status: JobStatus | None = None,
+        source: FindingSource | None = None,
+        limit: int = 50,
+    ) -> list[JobRecord]:
+        clauses = ["tenant_id = ?"]
+        parameters: list[Any] = [tenant_id]
+        if status is not None:
+            clauses.append("status = ?")
+            parameters.append(status.value)
+        if source is not None:
+            clauses.append("source = ?")
+            parameters.append(source.value)
+        parameters.append(max(1, min(limit, 200)))
+        statement = (
+            "SELECT * FROM scan_jobs WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY created_at DESC, job_id DESC LIMIT ?"
+        )
+        with self._lock:
+            rows = self._connection.execute(statement, parameters).fetchall()
+        return [_job_from_row(row) for row in rows]
+
     def find_by_idempotency_key(
         self, tenant_id: str, idempotency_key: str
     ) -> JobRecord | None:

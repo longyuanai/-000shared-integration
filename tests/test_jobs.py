@@ -39,6 +39,34 @@ def test_job_creation_is_idempotent_per_tenant(tmp_path: Path) -> None:
     repository.close()
 
 
+def test_job_listing_filters_and_isolates_tenants(tmp_path: Path) -> None:
+    repository = SQLiteJobRepository(tmp_path / "jobs.sqlite3")
+    soc, _ = repository.create(
+        tenant_id="tenant-a", source=FindingSource.SOC, payload={}
+    )
+    code, _ = repository.create(
+        tenant_id="tenant-a", source=FindingSource.CODE, payload={}
+    )
+    repository.create(tenant_id="tenant-b", source=FindingSource.SOC, payload={})
+    repository.transition("tenant-a", code.id, JobStatus.SUCCEEDED)
+
+    assert {job.id for job in repository.list_jobs("tenant-a")} == {
+        soc.id,
+        code.id,
+    }
+    assert [
+        job.id
+        for job in repository.list_jobs(
+            "tenant-a", status=JobStatus.SUCCEEDED
+        )
+    ] == [code.id]
+    assert [
+        job.id
+        for job in repository.list_jobs("tenant-a", source=FindingSource.SOC)
+    ] == [soc.id]
+    repository.close()
+
+
 def test_job_events_and_status_survive_restart(tmp_path: Path) -> None:
     database = tmp_path / "jobs.sqlite3"
     first = SQLiteJobRepository(database)

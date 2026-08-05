@@ -13,7 +13,8 @@ from shared_integration.adapters import (
     ProductTimeoutError,
 )
 from shared_integration.auth import bind_tenant, reset_tenant
-from shared_integration.jobs import JobStatus, SQLiteJobRepository
+from shared_integration.jobs import JobStatus
+from shared_integration.repositories import JobRepository
 
 
 class JobCancelledError(RuntimeError):
@@ -26,7 +27,7 @@ class JobExecutor:
     def __init__(
         self,
         *,
-        repository: SQLiteJobRepository,
+        repository: JobRepository,
         registry: FindingRegistry,
         products: Mapping[FindingSource, ProductAdapter],
         correlations: Sequence[CorrelationRule] = (),
@@ -180,7 +181,11 @@ class JobExecutor:
     ) -> None:
         existing = list(self.registry.findings)
         for finding in findings:
-            await self.registry.add(finding)
+            add_for_job = getattr(self.registry, "add_for_job", None)
+            if add_for_job is None:
+                await self.registry.add(finding)
+            else:
+                await add_for_job(finding, job_id=job_id)
             self.repository.append_event(
                 tenant_id,
                 job_id,

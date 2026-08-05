@@ -10,3 +10,8 @@ build/
 *.egg-info/
 workspace/
 *.sqlite3
+
+# Local-only environment files. Sample lives at .env.example.
+.env
+.env.local
+.env.*.local

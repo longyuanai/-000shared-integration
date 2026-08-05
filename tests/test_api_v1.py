@@ -122,6 +122,16 @@ async def test_job_queries_are_tenant_isolated(
     assert same_tenant.status_code == 200
     assert other_tenant.status_code == 404
 
+    same_tenant_list = await request(
+        app, "GET", "/v1/scans?source=002", token=VIEWER_TOKEN
+    )
+    other_tenant_list = await request(
+        app, "GET", "/v1/scans", token=OTHER_TOKEN
+    )
+    assert same_tenant_list.status_code == 200
+    assert [item["id"] for item in same_tenant_list.json()["jobs"]] == [job_id]
+    assert other_tenant_list.json() == {"count": 0, "jobs": []}
+
 
 async def test_viewer_cannot_create_or_cancel(
     v1_app: tuple[FastAPI, RecordingDispatcher],

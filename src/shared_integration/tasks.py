@@ -9,16 +9,24 @@ from shared_integration.celery_app import celery_app
 from shared_integration.execution import JobExecutor
 from shared_integration.gateway import build_gateway
 from shared_integration.jobs import SQLiteJobRepository
+from shared_integration.sql_jobs import SQLAlchemyJobRepository
 
 
 @celery_app.task(name="shared_integration.execute_job", acks_late=True)
 def execute_job(job_id: str, tenant_id: str) -> None:
+    database_url = os.getenv("INTEGRATION_DATABASE_URL")
     database = os.getenv("INTEGRATION_DB_PATH")
-    if not database:
-        raise RuntimeError("INTEGRATION_DB_PATH is required for Celery workers")
+    if not database_url and not database:
+        raise RuntimeError(
+            "INTEGRATION_DATABASE_URL or INTEGRATION_DB_PATH is required for workers"
+        )
 
-    repository = SQLiteJobRepository(database)
-    gateway = build_gateway(database_path=database)
+    repository = (
+        SQLAlchemyJobRepository(database_url)
+        if database_url
+        else SQLiteJobRepository(database or ":memory:")
+    )
+    gateway = build_gateway(database_path=database, database_url=database_url)
     executor = JobExecutor(
         repository=repository,
         registry=gateway.registry,

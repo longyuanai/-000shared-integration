@@ -26,8 +26,12 @@ from shared_integration.dispatch import (
     JobDispatcher,
 )
 from shared_integration.execution import JobExecutor
+from shared_integration.finding_lifecycle import SQLAlchemyTenantFindingRegistry
+from shared_integration.identity import SQLAlchemyIdentityRepository
 from shared_integration.jobs import SQLiteJobRepository
 from shared_integration.persistence import SQLiteTenantFindingRegistry
+from shared_integration.repositories import JobRepository
+from shared_integration.sql_jobs import SQLAlchemyJobRepository
 
 
 def suite_root() -> Path:
@@ -40,12 +44,19 @@ def build_gateway(
     *,
     registry: FindingRegistry | None = None,
     database_path: str | Path | None = None,
+    database_url: str | None = None,
 ) -> IntegrationGateway:
     """Compose all six subprocess adapters behind the v0.5 core gateway."""
     products_root = (root or suite_root()).resolve()
     configured_database = database_path or os.getenv("INTEGRATION_DB_PATH")
+    configured_database_url = database_url or os.getenv("INTEGRATION_DATABASE_URL")
     finding_registry = registry
-    if finding_registry is None and configured_database:
+    if finding_registry is None and configured_database_url:
+        finding_registry = SQLAlchemyTenantFindingRegistry(
+            configured_database_url,
+            create_schema=_auto_create_schema(),
+        )
+    elif finding_registry is None and configured_database:
         finding_registry = SQLiteTenantFindingRegistry(configured_database)
     products = {
         FindingSource.SOC: SOCAdapter(products_root / "001AI-SOC-Agent"),
@@ -73,17 +84,29 @@ def build_app(
     *,
     registry: FindingRegistry | None = None,
     database_path: str | Path | None = None,
-    job_repository: SQLiteJobRepository | None = None,
+    database_url: str | None = None,
+    job_repository: JobRepository | None = None,
     dispatcher: JobDispatcher | None = None,
+    identity_repository: SQLAlchemyIdentityRepository | None = None,
 ) -> FastAPI:
     """Build the HTTP app with tenant and RBAC middleware."""
     gateway = build_gateway(
         root,
         registry=registry,
         database_path=database_path,
+        database_url=database_url,
     )
     configured_database = database_path or os.getenv("INTEGRATION_DB_PATH")
-    jobs = job_repository or SQLiteJobRepository(configured_database or ":memory:")
+    configured_database_url = database_url or os.getenv("INTEGRATION_DATABASE_URL")
+    if job_repository is not None:
+        jobs = job_repository
+    elif configured_database_url:
+        jobs = SQLAlchemyJobRepository(
+            configured_database_url,
+            create_schema=_auto_create_schema(),
+        )
+    else:
+        jobs = SQLiteJobRepository(configured_database or ":memory:")
     executor = JobExecutor(
         repository=jobs,
         registry=gateway.registry,
@@ -111,11 +134,43 @@ def build_app(
         repository=jobs,
         dispatcher=dispatcher,
     )
+    auth_backend = os.getenv("INTEGRATION_AUTH_BACKEND", "static").strip().lower()
+    if auth_backend not in {"static", "database", "hybrid"}:
+        raise RuntimeError(
+            "INTEGRATION_AUTH_BACKEND must be 'static', 'database', or 'hybrid'"
+        )
+    if auth_backend in {"database", "hybrid"}:
+        if identity_repository is None and not configured_database_url:
+            raise RuntimeError(
+                "database authentication requires INTEGRATION_DATABASE_URL"
+            )
+        identity_repository = identity_repository or SQLAlchemyIdentityRepository(
+            configured_database_url or "", create_schema=_auto_create_schema()
+        )
+    principals = (
+        load_principals(require_when_enabled=auth_backend == "static")
+        if auth_backend in {"static", "hybrid"}
+        else {}
+    )
+    application.state.identity_repository = identity_repository
     application.add_middleware(
         TenantRBACMiddleware,
-        principals=load_principals(),
+        principals=principals,
+        authenticator=(
+            identity_repository.authenticate_api_key
+            if identity_repository is not None
+            else None
+        ),
     )
     return application
+
+
+def _auto_create_schema() -> bool:
+    return os.getenv("INTEGRATION_AUTO_CREATE_SCHEMA", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
 
 app: FastAPI = build_app()

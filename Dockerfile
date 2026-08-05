@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+ARG PYTHON_BASE_IMAGE=python:3.12-slim
+FROM ${PYTHON_BASE_IMAGE}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -18,8 +19,8 @@ COPY ["000shared-integration/", "/suite/000shared-integration/"]
 COPY ["001AI-SOC-Agent/", "/suite/001AI-SOC-Agent/"]
 COPY ["002AI-Vulnerability-Agent/", "/suite/002AI-Vulnerability-Agent/"]
 COPY ["003AI Agent安全靶场/", "/suite/003AI Agent安全靶场/"]
-COPY ["004AI代码审计/", "/suite/004AI-Code-Audit/"]
-COPY ["005AI逆向Agent/", "/suite/005AI-Reverse-Agent/"]
+COPY ["004AI-Code-Audit/", "/suite/004AI-Code-Audit/"]
+COPY ["005AI-Reverse-Agent/", "/suite/005AI-Reverse-Agent/"]
 COPY ["006AI-Firmware-Security-Agent/", "/suite/006AI-Firmware-Security-Agent/"]
 
 RUN python -m pip install --no-cache-dir \

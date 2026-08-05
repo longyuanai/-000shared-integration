@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from shared_llm_core import FindingSource, IntegrationGateway
+from shared_llm_core import FindingSeverity, FindingSource, IntegrationGateway
 
 from shared_integration.dispatch import JobDispatcher
-from shared_integration.jobs import JobRecord, JobStatus, SQLiteJobRepository
+from shared_integration.finding_lifecycle import FindingStatus
+from shared_integration.jobs import JobRecord, JobStatus
+from shared_integration.repositories import JobRepository
 
 
 class ScanCreateRequest(BaseModel):
@@ -22,11 +24,16 @@ class ScanCreateRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class FindingUpdateRequest(BaseModel):
+    status: FindingStatus | None = None
+    assigned_to: str | None = Field(default=None, max_length=255)
+
+
 def install_v1_routes(
     application: FastAPI,
     *,
     gateway: IntegrationGateway,
-    repository: SQLiteJobRepository,
+    repository: JobRepository,
     dispatcher: JobDispatcher,
 ) -> None:
     """Install job, capability, readiness, and event endpoints."""
@@ -130,6 +137,21 @@ def install_v1_routes(
             headers={"Location": f"/v1/scans/{job.id}"},
         )
 
+    @application.get("/v1/scans")
+    async def list_scans(
+        request: Request,
+        status: Annotated[JobStatus | None, Query()] = None,
+        source: Annotated[FindingSource | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    ) -> dict[str, Any]:
+        jobs = repository.list_jobs(
+            request.state.tenant_id,
+            status=status,
+            source=source,
+            limit=limit,
+        )
+        return {"count": len(jobs), "jobs": [job.to_dict() for job in jobs]}
+
     @application.get("/v1/scans/{job_id}")
     async def get_scan(request: Request, job_id: str) -> JSONResponse:
         job = repository.get(request.state.tenant_id, job_id)
@@ -211,6 +233,89 @@ def install_v1_routes(
             headers={"Cache-Control": "no-cache, no-transform"},
         )
 
+    @application.get("/v1/findings")
+    async def list_findings(
+        request: Request,
+        cursor: Annotated[str | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 100,
+        source: FindingSource | None = None,
+        severity: FindingSeverity | None = None,
+        status: FindingStatus | None = None,
+    ) -> JSONResponse:
+        list_page = getattr(gateway.registry, "list_page", None)
+        if list_page is None:
+            return _error(
+                503,
+                "LIFECYCLE_STORE_UNAVAILABLE",
+                "Finding lifecycle storage requires INTEGRATION_DATABASE_URL",
+                request_id=request.headers.get("x-request-id"),
+            )
+        try:
+            records, next_cursor = list_page(
+                request.state.tenant_id,
+                cursor=cursor,
+                limit=limit,
+                source=source,
+                severity=severity,
+                status=status,
+            )
+        except ValueError:
+            return _error(
+                400,
+                "INVALID_CURSOR",
+                "The finding cursor is invalid",
+                request_id=request.headers.get("x-request-id"),
+            )
+        return JSONResponse(
+            content={
+                "count": len(records),
+                "items": [record.to_dict() for record in records],
+                "next_cursor": next_cursor,
+            }
+        )
+
+    @application.patch("/v1/findings/{finding_id}")
+    async def update_finding(
+        request: Request,
+        finding_id: str,
+        body: FindingUpdateRequest,
+    ) -> JSONResponse:
+        update_lifecycle = getattr(gateway.registry, "update_lifecycle", None)
+        if update_lifecycle is None:
+            return _error(
+                503,
+                "LIFECYCLE_STORE_UNAVAILABLE",
+                "Finding lifecycle storage requires INTEGRATION_DATABASE_URL",
+                request_id=request.headers.get("x-request-id"),
+            )
+        if not body.model_fields_set:
+            return _error(
+                400,
+                "EMPTY_UPDATE",
+                "At least one lifecycle field must be provided",
+                request_id=request.headers.get("x-request-id"),
+            )
+        changes: dict[str, Any] = {
+            "actor": f"role:{request.state.role}",
+        }
+        if "status" in body.model_fields_set:
+            changes["status"] = body.status
+        if "assigned_to" in body.model_fields_set:
+            changes["assigned_to"] = body.assigned_to
+        record = update_lifecycle(
+            request.state.tenant_id,
+            finding_id,
+            **changes,
+        )
+        if record is None:
+            return _error(
+                404,
+                "FINDING_NOT_FOUND",
+                "Finding not found",
+                request_id=request.headers.get("x-request-id"),
+            )
+        return JSONResponse(content=record.to_dict())
+
     @application.get("/v1/admin/health")
     async def admin_health() -> dict[str, Any]:
         return {
@@ -226,9 +331,7 @@ def install_v1_routes(
         }
 
 
-def _required(
-    repository: SQLiteJobRepository, tenant_id: str, job_id: str
-) -> JobRecord:
+def _required(repository: JobRepository, tenant_id: str, job_id: str) -> JobRecord:
     job = repository.get(tenant_id, job_id)
     if job is None:  # pragma: no cover - repository invariant after create
         raise RuntimeError("scan job disappeared")
@@ -259,4 +362,4 @@ def _error(
     return JSONResponse(status_code=status_code, content={"error": error})
 
 
-__all__ = ["ScanCreateRequest", "install_v1_routes"]
+__all__ = ["FindingUpdateRequest", "ScanCreateRequest", "install_v1_routes"]
