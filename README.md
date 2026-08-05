@@ -5,6 +5,10 @@ Integration gateway for the longyuanai AI Security Agent suite.
 The service composes the six product CLIs behind the frozen
 `shared-llm-core` v0.5 `IntegrationGateway` contract.
 
+The researched v1.0 architecture, open-source project comparison, target data
+model, API, RBAC, deployment topology, and M0–M5 implementation plan are in
+[docs/architecture.md](docs/architecture.md).
+
 ## Current capabilities
 
 - six subprocess-isolated product adapters;

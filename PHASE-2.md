@@ -2,7 +2,7 @@
 
 > **本仓角色**: 6 产品 ↔ IntegrationGateway 的横向适配层。`JSONSubprocessAdapter` 在端口 8080 把 6 个产品的 CLI 包成统一 HTTP API。
 > **当前状态**: v0.6 §15 CLI Envelope 契约已实施,6 产品适配中,**6/6 worker 4 件套全绿**。
-> **下一阶段**: v0.6 收尾 + v0.7+ 增厚。
+> **下一阶段**: 按 [`docs/architecture.md`](docs/architecture.md) 的 M0/M1 推进 `/v1` Job 契约与异步 Worker，同时保持 `/v0.5` 兼容。
 
 ---
 
@@ -100,18 +100,24 @@ async def health(self) -> dict:
 ## v1.0 路线图
 
 ```
-v0.6 (现在):
-  - Hook A: retry + timeout
-  - 005-FINAL-001: e2e CLI envelope smoke(6 产品)
+M0 (契约与迁移准备):
+  - /v1 Job 状态机、错误码和 AdapterCapabilities
+  - suite-lock.yml 固定八仓兼容 commit
+  - /v0.5 保持兼容并标记迁移路径
 
-v0.7:
-  - Hook B: active health probing
-  - SQLAlchemy / DB-backed FindingRegistry 走 000shared-llm-core 但 adapter 要适配
-  
-v1.0:
-  - 6 产品全 v1.0
-  - 集成层负载均衡(若产品有 multi-instance,可轮询)
-  - 多租户 token 鉴权(与 000shared-llm-core §17 同步)
+M1 (异步执行面):
+  - Celery + Valkey Worker
+  - timeout / cancel / retry / concurrency / idempotency
+  - fast / analysis / sandbox 三类队列
+
+M2 (生产数据与租户):
+  - PostgreSQL + SQLAlchemy + Alembic
+  - Tenant / Membership / ApiKey / Job / Finding / AuditEvent
+  - Finding fingerprint、去重、游标分页和 SQLite 导入
+
+M3-M4 (真实前端与生产交付):
+  - OIDC/BFF、完整 RBAC、真实 Job/SSE 页面
+  - HTTPS、备份、可观测性、安全扫描和公网 E2E
 ```
 
 ---
@@ -124,5 +130,5 @@ v1.0:
 
 ---
 
-**最近修订**: 2026-07-25 · Claude 起草 Phase-2 计划
-**下次回看触发**: v0.6 完成 / Hook A 启动 / v0.7+
+**最近修订**: 2026-08-05 · 对标 DefectDojo / IntelOwl / OpenCTI / Wazuh 后更新
+**下次回看触发**: M0 契约冻结 / M1 异步 Worker 完成
