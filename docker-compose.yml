@@ -75,6 +75,20 @@ services:
       - "4"
       - --loglevel
       - INFO
+    healthcheck:
+      test:
+        - CMD
+        - celery
+        - --app
+        - shared_integration.celery_app:celery_app
+        - inspect
+        - ping
+        - --timeout
+        - "3"
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
 
   worker-analysis:
     <<: *worker
@@ -89,6 +103,20 @@ services:
       - "2"
       - --loglevel
       - INFO
+    healthcheck:
+      test:
+        - CMD
+        - celery
+        - --app
+        - shared_integration.celery_app:celery_app
+        - inspect
+        - ping
+        - --timeout
+        - "3"
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
 
   worker-sandbox:
     <<: *worker
@@ -103,6 +131,20 @@ services:
       - "1"
       - --loglevel
       - INFO
+    healthcheck:
+      test:
+        - CMD
+        - celery
+        - --app
+        - shared_integration.celery_app:celery_app
+        - inspect
+        - ping
+        - --timeout
+        - "3"
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
 
   valkey:
     image: valkey/valkey:9.1.1-alpine
@@ -125,6 +167,8 @@ services:
       POSTGRES_DB: integration
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_HOST_PORT:-127.0.0.1:5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U integration -d integration"]
       interval: 5s

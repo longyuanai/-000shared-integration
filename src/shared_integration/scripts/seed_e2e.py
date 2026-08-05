@@ -29,11 +29,7 @@ for candidate in (_SRC_ROOT, _PACKAGE_ROOT):
 from sqlalchemy import delete  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 
-from shared_integration.db_models import (  # noqa: E402
-    FindingRow,
-    JobEventRow,
-    JobRow,
-)
+from shared_integration.db_models import FindingRow, JobEventRow, JobRow  # noqa: E402
 from shared_integration.sql_jobs import create_database_engine  # noqa: E402
 
 
@@ -115,7 +111,7 @@ SEED_FINDINGS: list[dict[str, Any]] = [
 
 
 def _now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
+    return dt.datetime.now(dt.UTC)
 
 
 def _fingerprint(tenant_id: str, finding: dict[str, Any]) -> str:
