@@ -32,7 +32,6 @@ from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 from shared_integration.db_models import FindingRow, JobEventRow, JobRow  # noqa: E402
 from shared_integration.sql_jobs import create_database_engine  # noqa: E402
 
-
 SEED_FINDINGS: list[dict[str, Any]] = [
     {
         "source": "006",
