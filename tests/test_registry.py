@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from shared_llm_core import (
     Finding,
-    FindingRegistry as CoreFindingRegistry,
     FindingSeverity,
     FindingSource,
 )
+from shared_llm_core import (
+    FindingRegistry as CoreFindingRegistry,
+)
+
 from shared_integration.registry import FindingRegistry
 
 

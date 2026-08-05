@@ -17,8 +17,16 @@ from shared_integration.adapters import (
     SOCAdapter,
     VulnAdapter,
 )
+from shared_integration.api_v1 import install_v1_routes
 from shared_integration.auth import TenantRBACMiddleware, load_principals
 from shared_integration.correlations import SameHostMultiSourceRule
+from shared_integration.dispatch import (
+    CeleryJobDispatcher,
+    InlineJobDispatcher,
+    JobDispatcher,
+)
+from shared_integration.execution import JobExecutor
+from shared_integration.jobs import SQLiteJobRepository
 from shared_integration.persistence import SQLiteTenantFindingRegistry
 
 
@@ -65,6 +73,8 @@ def build_app(
     *,
     registry: FindingRegistry | None = None,
     database_path: str | Path | None = None,
+    job_repository: SQLiteJobRepository | None = None,
+    dispatcher: JobDispatcher | None = None,
 ) -> FastAPI:
     """Build the HTTP app with tenant and RBAC middleware."""
     gateway = build_gateway(
@@ -72,9 +82,35 @@ def build_app(
         registry=registry,
         database_path=database_path,
     )
+    configured_database = database_path or os.getenv("INTEGRATION_DB_PATH")
+    jobs = job_repository or SQLiteJobRepository(configured_database or ":memory:")
+    executor = JobExecutor(
+        repository=jobs,
+        registry=gateway.registry,
+        products=gateway._products,  # noqa: SLF001 - integration composition boundary
+        correlations=gateway._correlations,  # noqa: SLF001
+        max_attempts=int(os.getenv("INTEGRATION_JOB_MAX_ATTEMPTS", "2")),
+    )
+    if dispatcher is None:
+        job_mode = os.getenv("INTEGRATION_JOB_MODE", "inline").strip().lower()
+        if job_mode == "inline":
+            dispatcher = InlineJobDispatcher(executor)
+        elif job_mode == "celery":
+            dispatcher = CeleryJobDispatcher()
+        else:
+            raise RuntimeError("INTEGRATION_JOB_MODE must be 'inline' or 'celery'")
     application = gateway.app
     application.state.gateway = gateway
     application.state.registry = gateway.registry
+    application.state.job_repository = jobs
+    application.state.job_dispatcher = dispatcher
+    application.state.job_executor = executor
+    install_v1_routes(
+        application,
+        gateway=gateway,
+        repository=jobs,
+        dispatcher=dispatcher,
+    )
     application.add_middleware(
         TenantRBACMiddleware,
         principals=load_principals(),

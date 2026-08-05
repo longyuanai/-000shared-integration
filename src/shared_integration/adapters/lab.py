@@ -11,3 +11,6 @@ class LabAdapter(JSONSubprocessAdapter):
     source = FindingSource.LAB
     module = "ai_agent_lab.cli"
     product_id = "003-lab"
+    queue = "sandbox"
+    default_timeout_seconds = 300.0
+    default_max_concurrency = 1

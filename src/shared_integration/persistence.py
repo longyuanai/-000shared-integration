@@ -38,6 +38,7 @@ class SQLiteTenantFindingRegistry(FindingRegistry):
         self._connection = sqlite3.connect(self.path, check_same_thread=False)
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=NORMAL")
+        self._connection.execute("PRAGMA busy_timeout=5000")
         self._connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS findings (

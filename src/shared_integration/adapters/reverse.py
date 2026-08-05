@@ -11,3 +11,6 @@ class ReverseAdapter(JSONSubprocessAdapter):
     source = FindingSource.REVERSE
     module = "ai_reverse_agent.cli"
     product_id = "005-reverse"
+    queue = "sandbox"
+    default_timeout_seconds = 600.0
+    default_max_concurrency = 1

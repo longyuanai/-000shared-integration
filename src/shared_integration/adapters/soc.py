@@ -11,3 +11,6 @@ class SOCAdapter(JSONSubprocessAdapter):
     source = FindingSource.SOC
     module = "ai_soc_agent.cli"
     product_id = "001-soc"
+    queue = "fast"
+    default_timeout_seconds = 60.0
+    default_max_concurrency = 4

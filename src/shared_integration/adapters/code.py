@@ -11,3 +11,5 @@ class CodeAdapter(JSONSubprocessAdapter):
     source = FindingSource.CODE
     module = "codeguard.cli"
     product_id = "004-code"
+    queue = "analysis"
+    default_timeout_seconds = 300.0

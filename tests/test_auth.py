@@ -48,6 +48,7 @@ def secured_app(
     monkeypatch.setenv("INTEGRATION_AUTH_REQUIRED", "true")
     app = build_app(tmp_path, database_path=tmp_path / "gateway.sqlite3")
     yield app
+    app.state.job_repository.close()
     app.state.registry.close()
 
 

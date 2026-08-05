@@ -302,6 +302,11 @@ HTTPS Ingress
 
 ## 14. 分阶段实施计划
 
+> 实施状态（2026-08-05）：M0/M1 代码已落地并通过单元、API、真实 SOC
+> adapter 与 Celery task 入口验证；中央锁定版本 CI 已转入
+> `000shared-llm-core/suite-lock.yml`。实际 Valkey broker 联调和六产品完整
+> CLI 套件仍是 M1 发布门禁，M2–M5 尚未开始。
+
 ### M0：契约与迁移准备
 
 - 新增 `/v1` OpenAPI、Job 状态机、错误码和 AdapterCapabilities。
@@ -371,4 +376,7 @@ HTTPS Ingress
 
 ## 16. 下一步
 
-立即进入 M0 + M1：先落地 `/v1` Job 契约、Adapter timeout/cancel/concurrency 和 Celery/Valkey Worker，再开始 PostgreSQL 与 OIDC。这样能优先消除当前同步子进程和生产假在线风险，同时不会阻塞已有 `/v0.5` Dashboard。
+完成 M1 发布门禁：在真实 Valkey 上验证三类 Worker 队列及六产品
+queued → terminal 全链路，然后进入 M2 的 PostgreSQL、租户实体、Finding
+生命周期与审计事件。M3 再接 OIDC/BFF、真实 Dashboard 工作流和 Playwright
+多租户/RBAC E2E，避免在持久化边界尚未稳定时重做前端权限模型。

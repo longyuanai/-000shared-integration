@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from shared_llm_core import Finding, FindingSeverity, FindingSource
+
 from shared_integration.correlations import SameHostMultiSourceRule
 
-NOW = datetime(2026, 7, 24, 12, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 24, 12, tzinfo=UTC)
 
 
 def make_finding(

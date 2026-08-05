@@ -11,3 +11,6 @@ class FirmwareAdapter(JSONSubprocessAdapter):
     source = FindingSource.FIRMWARE
     module = "ai_firmware_agent.cli"
     product_id = "006-firmware"
+    queue = "sandbox"
+    default_timeout_seconds = 900.0
+    default_max_concurrency = 1

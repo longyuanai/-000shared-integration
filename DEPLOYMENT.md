@@ -1,49 +1,64 @@
 # IntegrationGateway deployment
 
-The production unit is one OCI image containing the gateway and the six product
-CLIs. Build it from the suite root because the adapters execute those sibling
-repositories as isolated subprocesses.
+The v1 execution unit uses one OCI image with separate API and Celery Worker
+commands. Build context remains the suite root because the adapters execute the
+six sibling product CLIs.
+
+## Production-style single-node deployment
+
+Copy `.env.example` to `.env`, replace `INTEGRATION_AUTH_TOKENS` with at least
+32 random bytes from a secret manager, then run from this repository:
+
+```powershell
+docker compose up --build -d
+```
+
+The Compose topology starts:
+
+- `gateway`: FastAPI control plane on port 8080;
+- `worker-fast`: short SOC-style jobs, concurrency 4;
+- `worker-analysis`: vulnerability and code analysis, concurrency 2;
+- `worker-sandbox`: lab, reverse, and firmware work, concurrency 1;
+- `valkey`: Celery broker, result backend, and durable append-only queue state.
+
+API and workers share `/data/gateway.sqlite3` during M1. SQLite WAL and a busy
+timeout make this suitable for a single-node transition, but M2 must migrate the
+job and Finding repositories to PostgreSQL before horizontal scaling.
+
+## Manual image build
+
+Build from the suite root:
 
 ```powershell
 docker build `
   -f .\000shared-integration\Dockerfile `
-  -t longyuan/integration-gateway:0.6.0 `
+  -t longyuan/integration-gateway:0.7.0 `
   .
 ```
 
-Create a token with at least 32 random bytes and configure it as a JSON mapping:
-
-```json
-{
-  "replace-with-a-random-secret": {
-    "tenant": "longyuan",
-    "role": "admin"
-  }
-}
-```
-
-Run the image with a persistent volume:
+Run a local inline API without Celery only for development:
 
 ```powershell
-docker volume create longyuan-gateway-data
-docker run --rm -p 8080:8080 `
-  --name longyuan-integration-gateway `
-  --read-only `
-  --tmpfs /tmp `
-  --security-opt no-new-privileges `
-  --mount source=longyuan-gateway-data,target=/data `
-  --env "INTEGRATION_AUTH_TOKENS=<JSON_FROM_SECRET_STORE>" `
-  longyuan/integration-gateway:0.6.0
+$env:INTEGRATION_JOB_MODE = "inline"
+$env:INTEGRATION_DB_PATH = ".\gateway.sqlite3"
+$env:INTEGRATION_AUTH_TOKENS = '{"local-development-token-at-least-32-bytes":{"tenant":"local","role":"admin"}}'
+python -m shared_integration.gateway
 ```
+
+## Platform requirements
 
 Production hosting must provide:
 
 - an HTTPS service URL and port injection through `PORT`;
-- a persistent volume mounted at `/data`;
+- persistent storage mounted at `/data` during M1;
 - `INTEGRATION_AUTH_TOKENS` from its secret manager;
-- health probes against `/v0.5/health`;
-- no public exposure of the six product CLI processes.
+- private Valkey access, never exposed to the public network;
+- liveness probes against `/livez` and authenticated readiness probes against
+  `/readyz`;
+- no public exposure of Worker or product CLI processes;
+- resource limits and stronger isolation for the `sandbox` queue.
 
 After deployment, set the dashboard's server-side `GATEWAY_URL` to the HTTPS
-origin and `GATEWAY_TOKEN` to a tenant token from the same mapping. Never expose
-the token as a `NEXT_PUBLIC_*` variable.
+origin and use a server-side credential only. Never expose a token as a
+`NEXT_PUBLIC_*` variable. The M3 identity migration will replace the shared
+dashboard token with OIDC/BFF user context and scoped machine API keys.

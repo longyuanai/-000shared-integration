@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse
 
 _tenant_id: ContextVar[str] = ContextVar("integration_tenant_id", default="default")
 _ROLES = {"viewer", "analyst", "admin"}
+_PUBLIC_PATHS = {"/livez", "/v0.5/health"}
 
 
 @dataclass(frozen=True)
@@ -83,7 +84,7 @@ class TenantRBACMiddleware:
             return
 
         path = scope.get("path", "")
-        if path == "/v0.5/health":
+        if path in _PUBLIC_PATHS:
             await self._call_as(Principal("_system", "viewer"), scope, receive, send)
             return
 
@@ -101,6 +102,12 @@ class TenantRBACMiddleware:
             return
 
         method = scope.get("method", "GET").upper()
+        if path.startswith("/v1/admin/") and principal.role != "admin":
+            await JSONResponse(
+                {"detail": "admin role is required"},
+                status_code=403,
+            )(scope, receive, send)
+            return
         if method not in {"GET", "HEAD", "OPTIONS"} and principal.role == "viewer":
             await JSONResponse(
                 {"detail": "viewer role is read-only"},

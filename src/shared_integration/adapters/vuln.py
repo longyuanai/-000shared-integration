@@ -11,3 +11,5 @@ class VulnAdapter(JSONSubprocessAdapter):
     source = FindingSource.VULN
     module = "ai_vuln_agent.cli"
     product_id = "002-vuln"
+    queue = "analysis"
+    default_timeout_seconds = 180.0

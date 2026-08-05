@@ -1,0 +1,101 @@
+x-gateway-environment: &gateway-environment
+  INTEGRATION_DB_PATH: /data/gateway.sqlite3
+  INTEGRATION_JOB_MODE: celery
+  INTEGRATION_BROKER_URL: redis://valkey:6379/0
+  INTEGRATION_RESULT_BACKEND: redis://valkey:6379/1
+  INTEGRATION_JOB_MAX_ATTEMPTS: ${INTEGRATION_JOB_MAX_ATTEMPTS:-2}
+  INTEGRATION_AUTH_REQUIRED: "true"
+  INTEGRATION_AUTH_TOKENS: ${INTEGRATION_AUTH_TOKENS:?set INTEGRATION_AUTH_TOKENS}
+
+x-worker: &worker
+  image: longyuan/integration-gateway:${INTEGRATION_IMAGE_TAG:-0.7.0}
+  build:
+    context: ..
+    dockerfile: 000shared-integration/Dockerfile
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  volumes:
+    - gateway-data:/data
+  environment: *gateway-environment
+  depends_on:
+    valkey:
+      condition: service_healthy
+
+services:
+  gateway:
+    <<: *worker
+    command: ["python", "-m", "shared_integration.gateway"]
+    ports:
+      - "${PORT:-8080}:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/livez', timeout=3)
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  worker-fast:
+    <<: *worker
+    command:
+      - celery
+      - --app
+      - shared_integration.celery_app:celery_app
+      - worker
+      - --queues
+      - fast
+      - --concurrency
+      - "4"
+      - --loglevel
+      - INFO
+
+  worker-analysis:
+    <<: *worker
+    command:
+      - celery
+      - --app
+      - shared_integration.celery_app:celery_app
+      - worker
+      - --queues
+      - analysis
+      - --concurrency
+      - "2"
+      - --loglevel
+      - INFO
+
+  worker-sandbox:
+    <<: *worker
+    command:
+      - celery
+      - --app
+      - shared_integration.celery_app:celery_app
+      - worker
+      - --queues
+      - sandbox
+      - --concurrency
+      - "1"
+      - --loglevel
+      - INFO
+
+  valkey:
+    image: valkey/valkey:9.1.1-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  gateway-data:
+  valkey-data:

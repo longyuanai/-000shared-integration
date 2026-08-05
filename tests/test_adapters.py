@@ -2,23 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
-
 from shared_llm_core import FindingSource
+
 from shared_integration.adapters import (
     CodeAdapter,
     FirmwareAdapter,
     LabAdapter,
+    ProductOutputLimitError,
+    ProductTimeoutError,
     ReverseAdapter,
     SOCAdapter,
     VulnAdapter,
+    base,
 )
-from shared_integration.adapters import base
 
 
 class FakeProcess:
@@ -53,6 +56,12 @@ def test_soc_adapter_health_returns_ok(tmp_path: Path) -> None:
     assert SOCAdapter(tmp_path).health()["status"] == "ok"
 
 
+def test_missing_adapter_directory_is_degraded(tmp_path: Path) -> None:
+    health = SOCAdapter(tmp_path / "missing").health()
+    assert health["status"] == "degraded"
+    assert "path" not in health
+
+
 async def test_soc_adapter_scan_parses_stdout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -78,6 +87,58 @@ async def test_soc_adapter_uses_current_python(
     calls = install_fake_process(monkeypatch, {"findings": []})
     await collect(SOCAdapter(tmp_path))
     assert calls[0][0] == sys.executable
+
+
+async def test_payload_is_not_exposed_in_process_arguments(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = install_fake_process(monkeypatch, {"findings": []})
+    await collect(SOCAdapter(tmp_path))
+    flattened = " ".join(str(value) for value in calls[0][:-1])
+    assert '"host":"10.0.0.1"' not in flattened
+    assert "shared_integration.adapters.worker" in flattened
+
+
+async def test_adapter_enforces_output_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    install_fake_process(monkeypatch, {"findings": [{"title": "too large"}]})
+    adapter = SOCAdapter(tmp_path, max_output_bytes=5)
+    with pytest.raises(ProductOutputLimitError):
+        await collect(adapter)
+
+
+async def test_adapter_terminates_timed_out_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class SlowProcess:
+        returncode: int | None = None
+        terminated = False
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            await asyncio.sleep(60)
+            return b"{}", b""
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            return self.returncode or 0
+
+    process = SlowProcess()
+
+    async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> SlowProcess:
+        del args, kwargs
+        return process
+
+    monkeypatch.setattr(base.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    with pytest.raises(ProductTimeoutError):
+        await collect(SOCAdapter(tmp_path, timeout_seconds=0.01))
+    assert process.terminated is True
 
 
 def test_vuln_adapter_health_returns_ok(tmp_path: Path) -> None:

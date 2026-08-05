@@ -15,6 +15,9 @@ model, API, RBAC, deployment topology, and M0–M5 implementation plan are in
 - tenant-scoped bearer authentication with `viewer`, `analyst`, and `admin` roles;
 - tenant-isolated SQLite persistence for Findings and correlations;
 - SSE updates isolated by tenant;
+- `/v1` persisted scan jobs with idempotency, cancellation, events, and adapter capabilities;
+- Celery/Valkey routing across `fast`, `analysis`, and `sandbox` worker queues;
+- per-adapter timeout, concurrency, input/output limits, and payload-file isolation;
 - an OCI image that packages the gateway and all six product CLIs.
 
 ## Local run
@@ -33,6 +36,12 @@ The gateway listens on port `8080` and exposes:
 - `GET /v0.5/findings`
 - `GET /v0.5/correlations`
 - `GET /v0.5/stream`
+- `POST /v1/scans`
+- `GET /v1/scans/{job_id}`
+- `POST /v1/scans/{job_id}/cancel`
+- `GET /v1/scans/{job_id}/events`
+- `GET /v1/adapters`
+- `GET /livez` and authenticated `GET /readyz`
 
 Example health check:
 
@@ -50,7 +59,7 @@ Build from the suite root:
 
 ```powershell
 docker build -f .\000shared-integration\Dockerfile `
-  -t longyuan/integration-gateway:0.6.0 .
+  -t longyuan/integration-gateway:0.7.0 .
 ```
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for volume, secret, and dashboard wiring.

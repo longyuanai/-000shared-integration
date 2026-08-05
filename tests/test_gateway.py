@@ -87,6 +87,9 @@ def test_module_exposes_fastapi_app() -> None:
     assert "/v0.5/health" in paths
     assert "/v0.5/{source}/scan" in paths
     assert "/v0.5/stream" in paths
+    assert "/v1/scans" in paths
+    assert "/v1/adapters" in paths
+    assert "/livez" in paths
 
 
 def test_main_runs_on_port_8080(monkeypatch: pytest.MonkeyPatch) -> None:
