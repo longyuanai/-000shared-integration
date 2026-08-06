@@ -25,9 +25,19 @@ async def request(
         return await client.request(method, path, **kwargs)
 
 
-def test_suite_root_is_product_parent() -> None:
+def test_suite_root_is_product_parent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("INTEGRATION_SUITE_ROOT", raising=False)
     expected = Path(__file__).resolve().parents[2]
     assert suite_root() == expected
+
+
+def test_suite_root_honors_explicit_container_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configured = tmp_path / "suite"
+    monkeypatch.setenv("INTEGRATION_SUITE_ROOT", str(configured))
+
+    assert suite_root() == configured.resolve()
 
 
 def test_build_gateway_returns_core_gateway(tmp_path: Path) -> None:

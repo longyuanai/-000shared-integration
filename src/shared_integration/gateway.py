@@ -36,6 +36,9 @@ from shared_integration.sql_jobs import SQLAlchemyJobRepository
 
 def suite_root() -> Path:
     """Return the directory containing all longyuanai product repositories."""
+    configured = os.getenv("INTEGRATION_SUITE_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
     return Path(__file__).resolve().parents[3]
 
 
