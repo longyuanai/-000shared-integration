@@ -62,9 +62,7 @@ def build_gateway(
         FindingSource.SOC: SOCAdapter(products_root / "001AI-SOC-Agent"),
         FindingSource.VULN: VulnAdapter(products_root / "002AI-Vulnerability-Agent"),
         FindingSource.LAB: LabAdapter(products_root / "003AI Agent安全靶场"),
-        FindingSource.CODE: CodeAdapter(
-            products_root / "004AI-Code-Audit" / "004AI-CodeGuard-upgrade"
-        ),
+        FindingSource.CODE: CodeAdapter(products_root / "004AI-Code-Audit"),
         FindingSource.REVERSE: ReverseAdapter(
             products_root / "005AI-Reverse-Agent"
         ),

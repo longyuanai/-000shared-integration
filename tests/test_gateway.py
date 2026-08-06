@@ -46,6 +46,13 @@ def test_build_gateway_registers_six_products(tmp_path: Path) -> None:
     }
 
 
+def test_build_gateway_uses_flat_code_audit_checkout(tmp_path: Path) -> None:
+    gateway = build_gateway(tmp_path)
+
+    code_adapter = gateway._products[FindingSource.CODE]  # noqa: SLF001
+    assert code_adapter._cli == (tmp_path / "004AI-Code-Audit").resolve()  # noqa: SLF001
+
+
 def test_build_gateway_uses_finding_registry(tmp_path: Path) -> None:
     assert isinstance(build_gateway(tmp_path).registry, FindingRegistry)
 
