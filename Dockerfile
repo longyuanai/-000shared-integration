@@ -1,5 +1,5 @@
 ARG PYTHON_BASE_IMAGE=python:3.12-slim
-FROM ${PYTHON_BASE_IMAGE}
+FROM ${PYTHON_BASE_IMAGE} AS source
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -34,6 +34,8 @@ RUN if [ ! -f /suite/004AI-Code-Audit/pyproject.toml ]; then \
       rm -rf /suite/004AI-Code-Audit; \
       mv /suite/004AI-Code-Audit-flat /suite/004AI-Code-Audit; \
     fi
+
+FROM source AS runtime
 
 RUN python -m pip install --no-cache-dir \
     /suite/000shared-llm-core \

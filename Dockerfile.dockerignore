@@ -1,20 +1,44 @@
+# Repository metadata is never needed by the runtime image.
 **/.git
-**/.venv
+**/.git/**
+
+# Local environment files and common credential material must not enter any
+# image layer. Runtime secrets are injected by the deployment platform.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+
+# Local dependency, cache, and build output directories.
 **/__pycache__
-**/*.pyc
+**/*.py[cod]
 **/.pytest_cache
 **/.pytest-*
 **/.ruff_cache
 **/.mypy_cache
+**/.venv
 **/.python-deps
 **/.test-deps
 **/.uv-cache
-**/workspace
+**/node_modules
 **/dist
 **/build
+**/*.egg-info
 **/docs
 **/samples
 **/tests
 **/*.exe
+
+# Test and browser artifacts may contain request headers or bearer tokens.
+**/playwright-report
+**/test-results
+**/*.trace
+**/coverage.xml
+**/.coverage
+**/htmlcov
+
+# Local databases and temporary workspaces are not image inputs.
+**/*.sqlite3
+**/workspace
 web-ui
 scripts
