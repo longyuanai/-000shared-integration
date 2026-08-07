@@ -5,6 +5,13 @@
 
 BEGIN;
 
+INSERT INTO tenants (
+    id, slug, name, status, retention_days, created_at, updated_at
+) VALUES (
+    'e2e', 'e2e', 'E2E Test Tenant', 'active', 90, now(), now()
+)
+ON CONFLICT (id) DO NOTHING;
+
 DELETE FROM correlation_findings WHERE correlation_id IN (
     SELECT id FROM correlations WHERE tenant_id = 'e2e'
 );

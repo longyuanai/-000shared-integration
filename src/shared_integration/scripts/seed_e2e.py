@@ -128,6 +128,11 @@ def _fingerprint(tenant_id: str, finding: dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _seed_fingerprint(tenant_id: str, finding: dict[str, Any]) -> str:
+    """Return a tagged fingerprint that fits the persisted VARCHAR(64) contract."""
+    return "e2e:" + _fingerprint(tenant_id, finding)[:60]
+
+
 def seed(tenant_id: str, reset: bool) -> dict[str, int]:
     database_url = os.environ.get("INTEGRATION_DATABASE_URL")
     if not database_url:
@@ -158,7 +163,7 @@ def seed(tenant_id: str, reset: bool) -> dict[str, int]:
 
         now = _now()
         for entry in SEED_FINDINGS:
-            fingerprint = "e2e:" + _fingerprint(tenant_id, entry)
+            fingerprint = _seed_fingerprint(tenant_id, entry)
             payload = {
                 "seeded_by": "seed_e2e",
                 "asset": entry.get("asset"),
@@ -198,15 +203,14 @@ def seed(tenant_id: str, reset: bool) -> dict[str, int]:
                     tenant_id=tenant_id,
                     source=("004", "001", "006")[job_index],
                     status=status,
-                    payload={"seeded_by": "seed_e2e"},
+                    queue=("analysis", "fast", "sandbox")[job_index],
+                    input={"seeded_by": "seed_e2e"},
+                    progress=(0.5, 1.0, 0.3)[job_index],
                     attempt=1,
                     cancel_requested=False,
                     result_count=(2, 1, 0)[job_index],
-                    error=(
-                        None
-                        if status != "failed"
-                        else {"code": "ADAPTER_TIMEOUT", "message": "分析超过时间限制"}
-                    ),
+                    error_code=(None if status != "failed" else "ADAPTER_TIMEOUT"),
+                    error_message=(None if status != "failed" else "分析超过时间限制"),
                     created_at=now - dt.timedelta(minutes=20 + job_index * 15),
                     updated_at=now - dt.timedelta(minutes=15 + job_index * 15),
                 )
