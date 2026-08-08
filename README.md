@@ -41,6 +41,7 @@ The gateway listens on port `8080` and exposes:
 - `GET /v0.5/health`
 - `POST /v0.5/{source}/scan`
 - `GET /v0.5/findings`
+
 - `GET /v0.5/correlations`
 - `GET /v0.5/stream`
 - `POST /v1/scans`
@@ -53,6 +54,19 @@ The gateway listens on port `8080` and exposes:
 - `POST /v1/auth/exchange`
 - `POST /v1/auth/session/revoke`
 - `GET /livez` and authenticated `GET /readyz`
+
+### Real browser RBAC fixture
+
+`docker-compose.rbac-e2e.yml` is an isolated test-only stack used by the Web
+Dashboard's `npm run test:e2e:rbac` gate. It creates ephemeral PostgreSQL and
+Valkey storage, applies Alembic migrations, and mounts the current Integration
+source read-only. Fixture tenants, users, identity clients, sessions, jobs, and
+findings all use an `e2e-rbac` run label and are deleted after every browser
+round; the Compose project is then removed with its temporary storage.
+
+The bridge credential is captured by the test orchestrator and redacted from
+logs. Do not reuse this Compose file, its generated identities, or its local
+development cookie mode for deployment.
 
 Example health check:
 
