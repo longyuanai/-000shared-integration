@@ -1,7 +1,7 @@
 # Longyuan AI Security Agent Suite 技术方案
 
 > 状态：v1.0 实施基线  
-> 最近更新：2026-08-05  
+> 最近更新：2026-08-09
 > 适用范围：`web-ui`、`000shared-llm-core`、`000shared-integration` 与 001–006 六个安全产品
 
 ## 1. 决策摘要
@@ -316,10 +316,12 @@ HTTPS Ingress
 > 生命周期与游标 API、SQLite 可重复导入、Tenant/User/Membership 管理、
 > 哈希 API Key 及数据库 RBAC。备份/恢复实演、真实 PostgreSQL 并发和全量测试
 > 已本地通过并推送；workflow refs 已改为从 suite lock 解析，替代 suite CI run
-> `31267714152` 全部通过，M2 发布门禁关闭。OIDC/BFF 身份边界见 core `ADR-003`，
-> 实施派活 `009-M3-AUTH` 已解锁；`AUTH-DATA-001` 已通过候选 suite CI，
-> `AUTH-HTTP-001` 已完成本地与真实 PostgreSQL 验证，Integration `c775e12` 的候选
-> suite CI run `31271147360` 成功；Web cookie/OIDC 迁移尚未开始。
+> `31267714152` 全部通过，M2 发布门禁关闭。OIDC/BFF 身份边界见 core `ADR-003`。
+> `AUTH-DATA-001`、`AUTH-HTTP-001`、`UI-SESSION-001` 和 `E2E-RBAC-001` 已完成：
+> Integration `15a905b`、Web `3dbc361` 与 Core `d41bfea` 的候选 suite CI run
+> `31276172231` 成功，八个 Python 组 `1914 passed, 7 skipped, 1 warning`，真实
+> PostgreSQL/Gateway/Web RBAC 两轮各 `13 passed`。当前进入发布文档、最终锁定和 Sites
+> 访问恢复。
 
 ### M0：契约与迁移准备
 
@@ -390,5 +392,5 @@ HTTPS Ingress
 
 ## 16. 下一步
 
-继续执行 M3 的 `UI-SESSION-001`：把 Dashboard 用户路径迁移到安全 cookie 和 Gateway
-短时会话；随后运行真实 Dashboard 工作流与 Playwright 多租户/RBAC E2E。
+完成 `DOC-AUTH-001` 与最终 suite lock；随后恢复既有 Sites 项目访问，注入 M3 运行时值，
+按 [`m3-auth-rollout-rollback.md`](m3-auth-rollout-rollback.md) 完成私有发布和回滚演练。

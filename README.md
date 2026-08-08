@@ -68,6 +68,10 @@ The bridge credential is captured by the test orchestrator and redacted from
 logs. Do not reuse this Compose file, its generated identities, or its local
 development cookie mode for deployment.
 
+Production migration, identity-client rotation, rollback, session cleanup, and
+troubleshooting are documented in
+[`docs/m3-auth-rollout-rollback.md`](docs/m3-auth-rollout-rollback.md).
+
 Example health check:
 
 ```powershell
