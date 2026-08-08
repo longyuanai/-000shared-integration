@@ -34,8 +34,9 @@
 固化，并由 [`009-M3-AUTH`](../000shared-llm-core/docs/dispatches/009-M3-AUTH.md) 派活。
 两者已接受/解锁；按 009 顺序实施：
 
-- `AUTH-DATA-001` 已完成并通过候选 suite CI；`AUTH-HTTP-001` 已完成本地与真实
-  PostgreSQL 验证，等待提交与候选 suite CI。
+- `AUTH-DATA-001` 已完成并通过候选 suite CI；`AUTH-HTTP-001` 已完成并推送，
+  Integration `c775e12` 的候选 suite CI run `31271147360` 成功（`1908 passed,
+  7 skipped, 1 warning`）。
 - 下一项为 Web OIDC/BFF 适配器与安全 cookie（`UI-SESSION-001`）。
 - tenant-aware API、RBAC 和审计边界。
 - 生产级迁移策略、容量基线、指标和告警。

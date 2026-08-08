@@ -318,7 +318,8 @@ HTTPS Ingress
 > 已本地通过并推送；workflow refs 已改为从 suite lock 解析，替代 suite CI run
 > `31267714152` 全部通过，M2 发布门禁关闭。OIDC/BFF 身份边界见 core `ADR-003`，
 > 实施派活 `009-M3-AUTH` 已解锁；`AUTH-DATA-001` 已通过候选 suite CI，
-> `AUTH-HTTP-001` 已完成本地与真实 PostgreSQL 验证，Web cookie/OIDC 迁移尚未开始。
+> `AUTH-HTTP-001` 已完成本地与真实 PostgreSQL 验证，Integration `c775e12` 的候选
+> suite CI run `31271147360` 成功；Web cookie/OIDC 迁移尚未开始。
 
 ### M0：契约与迁移准备
 
