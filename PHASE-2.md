@@ -1,6 +1,6 @@
 # 000shared-integration · Phase-2
 
-> 状态基线：2026-08-07。M2.1 预生产验收完成；M2 运维门禁已本地通过，待提交与远端 suite CI。
+> 状态基线：2026-08-09。M2.1 预生产验收与 M2 运维发布门禁均已完成。
 
 ## 已完成
 
@@ -23,11 +23,16 @@
 3. E2E Python/SQL seed 在空迁移库和重复运行场景通过。
 4. Ruff、全量 100 passed、admin CLI 和 Gateway `/livez` 通过。
 
-审计见 `AUDIT/008-M2-OPS.md`。剩余门禁是提交、推送、suite lock 更新和远端 CI。
+审计见 `AUDIT/008-M2-OPS.md`。Integration `4001790`、web-ui `e5a5274` 与 core
+`ffd75e6` 已推送。run `31188096745` 暴露 workflow 旧默认 SHA 后，core `e900a0a` 改为
+从 suite lock 解析 refs；替代 run `31267714152` 完成 9 仓锁校验与 `1873 passed,
+5 skipped, 1 warning, 0 failed`。审计已升级为 PASS。
 
 ## M3 候选范围
 
-远端 suite CI 通过后再拆派活：
+身份边界已在 core [`ADR-003`](../000shared-llm-core/docs/adr/ADR-003-M3-BFF-identity-boundary.md)
+固化，并由 [`009-M3-AUTH`](../000shared-llm-core/docs/dispatches/009-M3-AUTH.md) 派活。
+两者已接受/解锁；下一阶段按 009 顺序实施：
 
 - OIDC/BFF 与服务身份。
 - tenant-aware API、RBAC 和审计边界。

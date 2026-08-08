@@ -302,12 +302,14 @@ HTTPS Ingress
 
 ## 14. 分阶段实施计划
 
-> 实施状态（2026-08-05）：M0/M1 已通过真实 Valkey、三队列、六产品
+> 实施状态（2026-08-09）：M0/M1 已通过真实 Valkey、三队列、六产品
 > Worker、HTTP API 与取消迟到消息验证。M2 第一切片已落地 SQLAlchemy
 > 模型、Alembic、PostgreSQL Job/Finding/Audit 持久化、fingerprint 去重、
 > 生命周期与游标 API、SQLite 可重复导入、Tenant/User/Membership 管理、
-> 哈希 API Key 及数据库 RBAC 已落地。备份恢复实机演练和 PostgreSQL 高并发
-> 压测仍是 M2 剩余门禁；OIDC/BFF、前端真实工作流属于 M3。
+> 哈希 API Key 及数据库 RBAC。备份/恢复实演、真实 PostgreSQL 并发和全量测试
+> 已本地通过并推送；workflow refs 已改为从 suite lock 解析，替代 suite CI run
+> `31267714152` 全部通过，M2 发布门禁关闭。OIDC/BFF 身份边界见 core `ADR-003`，
+> 实施派活 `009-M3-AUTH` 已解锁。
 
 ### M0：契约与迁移准备
 
