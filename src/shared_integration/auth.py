@@ -38,7 +38,7 @@ class Principal:
 class PrincipalAuthenticator(Protocol):
     """Resolve a bearer token to a tenant principal."""
 
-    def __call__(self, token: str) -> Principal | None: ...
+    def __call__(self, token: str) -> Any | None: ...
 
 
 class ExchangeRateLimiter:

@@ -31,7 +31,11 @@ from shared_integration.dispatch import (
 )
 from shared_integration.execution import JobExecutor
 from shared_integration.finding_lifecycle import SQLAlchemyTenantFindingRegistry
-from shared_integration.identity import SQLAlchemyIdentityRepository
+from shared_integration.identity import (
+    ApiKeyPrincipal,
+    SQLAlchemyIdentityRepository,
+    UserSessionPrincipal,
+)
 from shared_integration.jobs import SQLiteJobRepository
 from shared_integration.persistence import SQLiteTenantFindingRegistry
 from shared_integration.repositories import JobRepository
@@ -161,18 +165,20 @@ def build_app(
         identity_repository=identity_repository,
         exchange_rate_limiter=application.state.exchange_rate_limiter,
     )
+    database_authenticator = None
+    if identity_repository is not None:
+
+        def database_authenticator(
+            token: str,
+        ) -> ApiKeyPrincipal | UserSessionPrincipal | None:
+            if token.startswith("igs_"):
+                return identity_repository.authenticate_user_session(token)
+            return identity_repository.authenticate_api_key(token)
+
     application.add_middleware(
         TenantRBACMiddleware,
         principals=principals,
-        authenticator=(
-            lambda token: (
-                identity_repository.authenticate_user_session(token)
-                if token.startswith("igs_")
-                else identity_repository.authenticate_api_key(token)
-            )
-            if identity_repository is not None
-            else None
-        ),
+        authenticator=database_authenticator,
     )
     return application
 

@@ -117,3 +117,25 @@ async def test_http_queries_are_tenant_isolated(
     )
     assert tenant_a.json()["count"] == 1
     assert tenant_b.json()["count"] == 0
+
+
+async def test_auth_disabled_keeps_local_gateway_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    for name in (
+        "INTEGRATION_AUTH_BACKEND",
+        "INTEGRATION_AUTH_REQUIRED",
+        "INTEGRATION_AUTH_TOKENS",
+        "INTEGRATION_DATABASE_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    app = build_app(tmp_path, database_path=tmp_path / "unauthenticated.sqlite3")
+    try:
+        findings = await request(app, "GET", "/v0.5/findings")
+        scan = await request(app, "POST", "/v0.5/unknown/scan", json={})
+        assert findings.status_code == 200
+        assert scan.status_code == 404
+    finally:
+        app.state.job_repository.close()
+        app.state.registry.close()
