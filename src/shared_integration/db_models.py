@@ -77,6 +77,9 @@ class MembershipRow(Base):
         String(128), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     role: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="active", server_default="active"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -102,6 +105,59 @@ class ApiKeyRow(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class IdentityClientRow(Base):
+    __tablename__ = "identity_clients"
+    __table_args__ = (
+        UniqueConstraint("key_prefix", name="uq_identity_clients_key_prefix"),
+        Index("ix_identity_clients_active_created", "active", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(32), nullable=False)
+    secret_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    allowed_issuers: Mapped[list[str]] = mapped_column(
+        JSON_DOCUMENT, nullable=False, default=list
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    rotated_from_id: Mapped[str | None] = mapped_column(
+        String(128), ForeignKey("identity_clients.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UserSessionRow(Base):
+    __tablename__ = "user_sessions"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_user_sessions_token_hash"),
+        Index("ix_user_sessions_expires_revoked", "expires_at", "revoked_at"),
+        Index("ix_user_sessions_tenant_user", "tenant_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    identity_client_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("identity_clients.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class JobRow(Base):
@@ -288,9 +344,11 @@ __all__ = [
     "CorrelationFindingRow",
     "CorrelationRow",
     "FindingRow",
+    "IdentityClientRow",
     "JobEventRow",
     "JobRow",
     "MembershipRow",
     "TenantRow",
+    "UserSessionRow",
     "UserRow",
 ]

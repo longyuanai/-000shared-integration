@@ -27,11 +27,13 @@ def test_m2_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
         "correlation_findings",
         "correlations",
         "findings",
+        "identity_clients",
         "job_events",
         "jobs",
         "memberships",
         "tenants",
         "users",
+        "user_sessions",
     }
     assert expected.issubset(set(inspect(engine).get_table_names()))
     assert {column["name"] for column in inspect(engine).get_columns("findings")} >= {
@@ -42,6 +44,35 @@ def test_m2_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
         "last_seen",
         "occurrences",
     }
+    assert "status" in {
+        column["name"] for column in inspect(engine).get_columns("memberships")
+    }
+    assert {
+        "key_prefix",
+        "secret_hash",
+        "allowed_issuers",
+        "rotated_from_id",
+        "last_used_at",
+        "revoked_at",
+    }.issubset(
+        {
+            column["name"]
+            for column in inspect(engine).get_columns("identity_clients")
+        }
+    )
+    assert {
+        "token_hash",
+        "user_id",
+        "tenant_id",
+        "identity_client_id",
+        "expires_at",
+        "last_seen_at",
+        "revoked_at",
+    }.issubset(
+        {
+            column["name"] for column in inspect(engine).get_columns("user_sessions")
+        }
+    )
     engine.dispose()
     command.check(config)
 

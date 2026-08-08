@@ -9,7 +9,11 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from shared_integration.identity import ROLES, SQLAlchemyIdentityRepository
+from shared_integration.identity import (
+    ROLES,
+    IdentityClientRecord,
+    SQLAlchemyIdentityRepository,
+)
 from shared_integration.migration_tools import LegacySQLiteMigrator
 
 
@@ -113,6 +117,55 @@ def main(argv: Sequence[str] | None = None) -> None:
                 actor=arguments.actor,
             )
             _print({"id": arguments.api_key, "revoked": revoked})
+        elif arguments.command == "identity-client-create":
+            issued = repository.issue_identity_client(
+                name=arguments.name,
+                allowed_issuers=arguments.issuer,
+            )
+            _print(
+                {
+                    **_identity_client_payload(issued.record),
+                    "token": issued.token,
+                    "warning": "store this token now; it cannot be recovered",
+                }
+            )
+        elif arguments.command == "identity-client-list":
+            _print(
+                {
+                    "identity_clients": [
+                        _identity_client_payload(record)
+                        for record in repository.list_identity_clients()
+                    ]
+                }
+            )
+        elif arguments.command == "identity-client-rotate":
+            issued = repository.rotate_identity_client(arguments.identity_client)
+            _print(
+                {
+                    **_identity_client_payload(issued.record),
+                    "token": issued.token,
+                    "warning": (
+                        "store this token now; verify it before revoking the previous client"
+                    ),
+                }
+            )
+        elif arguments.command == "identity-client-revoke":
+            revoked = repository.revoke_identity_client(arguments.identity_client)
+            _print({"id": arguments.identity_client, "revoked": revoked})
+        elif arguments.command == "user-session-revoke":
+            revoked = repository.revoke_user_session(
+                arguments.tenant,
+                arguments.session,
+                actor=arguments.actor,
+            )
+            _print({"id": arguments.session, "revoked": revoked})
+        elif arguments.command == "user-session-cleanup":
+            deleted = repository.cleanup_expired_user_sessions(
+                before=_parse_timestamp(arguments.before, option="--before")
+                if arguments.before
+                else None
+            )
+            _print({"deleted": deleted})
         else:  # pragma: no cover - argparse enforces the command set
             parser.error(f"unsupported command: {arguments.command}")
     finally:
@@ -167,6 +220,29 @@ def _parser() -> argparse.ArgumentParser:
     key_revoke.add_argument("--api-key", required=True)
     _actor_argument(key_revoke)
 
+    client_create = commands.add_parser("identity-client-create")
+    client_create.add_argument("--name", required=True)
+    client_create.add_argument("--issuer", action="append", required=True)
+
+    commands.add_parser("identity-client-list")
+
+    client_rotate = commands.add_parser("identity-client-rotate")
+    client_rotate.add_argument("--identity-client", required=True)
+
+    client_revoke = commands.add_parser("identity-client-revoke")
+    client_revoke.add_argument("--identity-client", required=True)
+
+    session_revoke = commands.add_parser("user-session-revoke")
+    session_revoke.add_argument("--tenant", required=True)
+    session_revoke.add_argument("--session", required=True)
+    _actor_argument(session_revoke)
+
+    session_cleanup = commands.add_parser("user-session-cleanup")
+    session_cleanup.add_argument(
+        "--before",
+        help="delete sessions expiring at or before this ISO-8601 timestamp",
+    )
+
     migrate = commands.add_parser("migrate-sqlite")
     migrate.add_argument("source", help="path to the legacy SQLite database")
     migrate.add_argument(
@@ -184,11 +260,32 @@ def _actor_argument(parser: argparse.ArgumentParser) -> None:
 def _parse_expiry(value: str | None) -> datetime | None:
     if value is None:
         return None
+    return _parse_timestamp(value, option="--expires-at")
+
+
+def _parse_timestamp(value: str, *, option: str) -> datetime:
     normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
     parsed = datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:
-        raise ValueError("--expires-at must include a timezone")
+        raise ValueError(f"{option} must include a timezone")
     return parsed
+
+
+def _identity_client_payload(record: IdentityClientRecord) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "name": record.name,
+        "key_prefix": record.key_prefix,
+        "allowed_issuers": list(record.allowed_issuers),
+        "active": record.active,
+        "rotated_from_id": record.rotated_from_id,
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
+        "last_used_at": (
+            record.last_used_at.isoformat() if record.last_used_at else None
+        ),
+        "revoked_at": record.revoked_at.isoformat() if record.revoked_at else None,
+    }
 
 
 def _print(payload: dict[str, Any]) -> None:

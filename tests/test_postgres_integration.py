@@ -5,15 +5,22 @@ from __future__ import annotations
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from shared_llm_core import Finding, FindingSeverity, FindingSource
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from shared_integration.auth import bind_tenant, reset_tenant
-from shared_integration.db_models import FindingRow, TenantRow
+from shared_integration.db_models import (
+    FindingRow,
+    IdentityClientRow,
+    TenantRow,
+    UserRow,
+    UserSessionRow,
+)
 from shared_integration.finding_lifecycle import SQLAlchemyTenantFindingRegistry
 from shared_integration.identity import SQLAlchemyIdentityRepository
 from shared_integration.jobs import JobStatus, SQLiteJobRepository
@@ -147,6 +154,90 @@ def test_postgres_concurrent_idempotency_claim_and_finding_dedup() -> None:
         clean()
         findings.close()
         jobs.close()
+        identity.close()
+        engine.dispose()
+
+
+def test_postgres_concurrent_identity_session_issue_and_revalidation() -> None:
+    database_url = _postgres_url()
+    suffix = uuid.uuid4().hex[:12]
+    tenant_id = f"identity-{suffix}"
+    engine = create_database_engine(database_url)
+    identity = SQLAlchemyIdentityRepository(database_url)
+    user_id: str | None = None
+    client_id: str | None = None
+
+    try:
+        identity.create_tenant(
+            tenant_id=tenant_id,
+            slug=tenant_id,
+            name="Concurrent Identity Tenant",
+        )
+        user = identity.upsert_user(
+            issuer="https://identity.example.test",
+            subject=f"subject-{suffix}",
+        )
+        user_id = user.id
+        identity.set_membership(
+            tenant_id=tenant_id,
+            user_id=user.id,
+            role="analyst",
+        )
+        client = identity.issue_identity_client(
+            name=f"BFF {suffix}",
+            allowed_issuers=["https://identity.example.test"],
+        )
+        client_id = client.record.id
+
+        def issue(_: int):  # type: ignore[no-untyped-def]
+            return identity.issue_user_session(
+                identity_client_id=client.record.id,
+                tenant_id=tenant_id,
+                user_id=user.id,
+            )
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            issued = list(pool.map(issue, range(24)))
+        assert len({item.id for item in issued}) == 24
+        assert len({item.token for item in issued}) == 24
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            principals = list(
+                pool.map(identity.authenticate_user_session, [item.token for item in issued])
+            )
+        assert all(principal is not None for principal in principals)
+        assert {principal.role for principal in principals if principal} == {"analyst"}
+
+        identity.set_membership(
+            tenant_id=tenant_id,
+            user_id=user.id,
+            role="admin",
+        )
+        assert identity.authenticate_user_session(issued[0].token).role == "admin"  # type: ignore[union-attr]
+
+        with engine.begin() as connection:
+            connection.execute(
+                update(UserSessionRow)
+                .where(UserSessionRow.tenant_id == tenant_id)
+                .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+            )
+        assert identity.cleanup_expired_user_sessions() == 24
+        with Session(engine) as session:
+            remaining = session.scalar(
+                select(func.count())
+                .select_from(UserSessionRow)
+                .where(UserSessionRow.tenant_id == tenant_id)
+            )
+            assert remaining == 0
+    finally:
+        with Session(engine) as session, session.begin():
+            session.execute(delete(TenantRow).where(TenantRow.id == tenant_id))
+            if user_id is not None:
+                session.execute(delete(UserRow).where(UserRow.id == user_id))
+            if client_id is not None:
+                session.execute(
+                    delete(IdentityClientRow).where(IdentityClientRow.id == client_id)
+                )
         identity.close()
         engine.dispose()
 

@@ -1,4 +1,4 @@
-"""Persistent tenant, user, membership, and API-key identity repository."""
+"""Persistent tenant, user, membership, API-key, and BFF-session repository."""
 
 from __future__ import annotations
 
@@ -9,30 +9,38 @@ import re
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Final
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from shared_integration.db_models import (
     ApiKeyRow,
     AuditEventRow,
     Base,
+    IdentityClientRow,
     MembershipRow,
     TenantRow,
     UserRow,
+    UserSessionRow,
 )
 from shared_integration.sql_jobs import create_database_engine
 
 ROLES: Final = frozenset({"viewer", "analyst", "admin"})
 TENANT_STATUSES: Final = frozenset({"active", "suspended", "disabled"})
+MEMBERSHIP_STATUSES: Final = frozenset({"active", "suspended"})
+IDENTITY_CLIENT_SCOPES: Final = ("auth:exchange",)
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,126}[a-z0-9]$|^[a-z0-9]$")
 _KEY_PREFIX = re.compile(r"^igw_[0-9a-f]{24}$")
+_IDENTITY_CLIENT_PREFIX = re.compile(r"^igb_[0-9a-f]{24}$")
+_USER_SESSION_TOKEN = re.compile(r"^igs_[A-Za-z0-9_-]{40,64}$")
 _SCRYPT_N = 2**14
 _SCRYPT_R = 8
 _SCRYPT_P = 1
+_DEFAULT_SESSION_TTL_SECONDS = 5 * 60
+_MAX_SESSION_TTL_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True)
@@ -62,6 +70,7 @@ class MembershipRecord:
     tenant_id: str
     user_id: str
     role: str
+    status: str
     created_at: datetime
 
 
@@ -81,6 +90,53 @@ class IssuedApiKey:
     scopes: tuple[str, ...]
     expires_at: datetime | None
     token: str
+
+
+@dataclass(frozen=True)
+class IdentityClientRecord:
+    id: str
+    name: str
+    key_prefix: str
+    allowed_issuers: tuple[str, ...]
+    active: bool
+    rotated_from_id: str | None
+    created_at: datetime
+    updated_at: datetime
+    last_used_at: datetime | None
+    revoked_at: datetime | None
+
+
+@dataclass(frozen=True)
+class IssuedIdentityClient:
+    record: IdentityClientRecord
+    token: str
+
+
+@dataclass(frozen=True)
+class IdentityClientPrincipal:
+    identity_client_id: str
+    name: str
+    allowed_issuers: tuple[str, ...]
+    scopes: tuple[str, ...] = IDENTITY_CLIENT_SCOPES
+
+
+@dataclass(frozen=True)
+class IssuedUserSession:
+    id: str
+    tenant_id: str
+    user_id: str
+    identity_client_id: str
+    expires_at: datetime
+    token: str
+
+
+@dataclass(frozen=True)
+class UserSessionPrincipal:
+    tenant_id: str
+    user_id: str
+    role: str
+    session_id: str
+    identity_client_id: str
 
 
 class SQLAlchemyIdentityRepository:
@@ -241,6 +297,7 @@ class SQLAlchemyIdentityRepository:
                     tenant_id=tenant_id,
                     user_id=user_id,
                     role=role,
+                    status="active",
                     created_at=now,
                 )
                 session.add(row)
@@ -257,6 +314,39 @@ class SQLAlchemyIdentityRepository:
                 now,
             )
             session.flush()
+        return _membership_record(row)
+
+    def set_membership_status(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        status: str,
+        actor: str = "system",
+    ) -> MembershipRecord:
+        if status not in MEMBERSHIP_STATUSES:
+            raise ValueError(
+                f"status must be one of {sorted(MEMBERSHIP_STATUSES)}"
+            )
+        now = _utcnow()
+        with self._sessions.begin() as session:
+            row = session.get(MembershipRow, (tenant_id, user_id))
+            if row is None:
+                raise KeyError(
+                    f"membership not found: tenant={tenant_id}, user={user_id}"
+                )
+            previous = row.status
+            row.status = status
+            _audit(
+                session,
+                tenant_id,
+                actor,
+                "membership.status_changed",
+                "membership",
+                user_id,
+                {"from": previous, "to": status},
+                now,
+            )
         return _membership_record(row)
 
     def get_membership(self, tenant_id: str, user_id: str) -> MembershipRecord | None:
@@ -375,6 +465,254 @@ class SQLAlchemyIdentityRepository:
                 )
             return True
 
+    def issue_identity_client(
+        self,
+        *,
+        name: str,
+        allowed_issuers: tuple[str, ...] | list[str],
+    ) -> IssuedIdentityClient:
+        clean_name = _normalize_client_name(name)
+        normalized_issuers = _normalize_issuers(allowed_issuers)
+        now = _utcnow()
+        row, token = _new_identity_client(
+            name=clean_name,
+            allowed_issuers=normalized_issuers,
+            rotated_from_id=None,
+            now=now,
+        )
+        with self._sessions.begin() as session:
+            session.add(row)
+            session.flush()
+        return IssuedIdentityClient(record=_identity_client_record(row), token=token)
+
+    def list_identity_clients(self) -> tuple[IdentityClientRecord, ...]:
+        with self._sessions() as session:
+            rows = session.scalars(
+                select(IdentityClientRow).order_by(
+                    IdentityClientRow.created_at,
+                    IdentityClientRow.id,
+                )
+            ).all()
+            return tuple(_identity_client_record(row) for row in rows)
+
+    def rotate_identity_client(self, identity_client_id: str) -> IssuedIdentityClient:
+        now = _utcnow()
+        with self._sessions.begin() as session:
+            previous = session.get(IdentityClientRow, identity_client_id)
+            if previous is None:
+                raise KeyError(f"identity client not found: {identity_client_id}")
+            if not previous.active or previous.revoked_at is not None:
+                raise ValueError("revoked identity clients cannot be rotated")
+            row, token = _new_identity_client(
+                name=previous.name,
+                allowed_issuers=tuple(previous.allowed_issuers or ()),
+                rotated_from_id=previous.id,
+                now=now,
+            )
+            session.add(row)
+            session.flush()
+        return IssuedIdentityClient(record=_identity_client_record(row), token=token)
+
+    def authenticate_identity_client(
+        self,
+        token: str,
+        *,
+        issuer: str,
+    ) -> IdentityClientPrincipal | None:
+        prefix, secret = _parse_identity_client_key(token)
+        clean_issuer = issuer.strip() if isinstance(issuer, str) else ""
+        if prefix is None or secret is None or not clean_issuer:
+            return None
+        now = _utcnow()
+        with self._sessions.begin() as session:
+            row = session.scalar(
+                select(IdentityClientRow).where(
+                    IdentityClientRow.key_prefix == prefix
+                )
+            )
+            if row is None or not _verify_secret(secret, row.secret_hash):
+                return None
+            if (
+                not row.active
+                or row.revoked_at is not None
+                or clean_issuer not in tuple(row.allowed_issuers or ())
+            ):
+                return None
+            row.last_used_at = now
+            row.updated_at = now
+            return IdentityClientPrincipal(
+                identity_client_id=row.id,
+                name=row.name,
+                allowed_issuers=tuple(row.allowed_issuers or ()),
+            )
+
+    def revoke_identity_client(self, identity_client_id: str) -> bool:
+        now = _utcnow()
+        with self._sessions.begin() as session:
+            row = session.get(IdentityClientRow, identity_client_id)
+            if row is None:
+                return False
+            if row.revoked_at is None:
+                row.active = False
+                row.revoked_at = now
+                row.updated_at = now
+            return True
+
+    def issue_user_session(
+        self,
+        *,
+        identity_client_id: str,
+        tenant_id: str,
+        user_id: str,
+        ttl_seconds: int = _DEFAULT_SESSION_TTL_SECONDS,
+        actor: str = "identity-exchange",
+    ) -> IssuedUserSession:
+        ttl = _normalize_session_ttl(ttl_seconds)
+        now = _utcnow()
+        expires_at = now + ttl
+        token = f"igs_{secrets.token_urlsafe(32)}"
+        row = UserSessionRow(
+            id=f"ses_{uuid.uuid4().hex}",
+            token_hash=_hash_session_token(token),
+            user_id=user_id,
+            tenant_id=tenant_id,
+            identity_client_id=identity_client_id,
+            created_at=now,
+            expires_at=expires_at,
+        )
+        with self._sessions.begin() as session:
+            client = session.get(IdentityClientRow, identity_client_id)
+            if (
+                client is None
+                or not client.active
+                or client.revoked_at is not None
+            ):
+                raise ValueError("identity client must be active")
+            tenant = session.get(TenantRow, tenant_id)
+            if tenant is None:
+                raise KeyError(f"tenant not found: {tenant_id}")
+            if tenant.status != "active":
+                raise ValueError("user sessions can only be issued for active tenants")
+            if session.get(UserRow, user_id) is None:
+                raise KeyError(f"user not found: {user_id}")
+            membership = session.get(MembershipRow, (tenant_id, user_id))
+            if membership is None or membership.status != "active":
+                raise ValueError("an active membership is required")
+            if membership.role not in ROLES:
+                raise ValueError("membership role is invalid")
+            session.add(row)
+            session.flush()
+            _audit(
+                session,
+                tenant_id,
+                actor,
+                "user_session.issued",
+                "user_session",
+                row.id,
+                {
+                    "user_id": user_id,
+                    "identity_client_id": identity_client_id,
+                    "expires_at": expires_at.isoformat(),
+                },
+                now,
+            )
+        return IssuedUserSession(
+            id=row.id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            identity_client_id=identity_client_id,
+            expires_at=expires_at,
+            token=token,
+        )
+
+    def authenticate_user_session(self, token: str) -> UserSessionPrincipal | None:
+        if not isinstance(token, str) or not _USER_SESSION_TOKEN.fullmatch(token):
+            return None
+        token_hash = _hash_session_token(token)
+        now = _utcnow()
+        with self._sessions.begin() as session:
+            row = session.scalar(
+                select(UserSessionRow).where(
+                    UserSessionRow.token_hash == token_hash
+                )
+            )
+            if row is None or not hmac.compare_digest(row.token_hash, token_hash):
+                return None
+            expires_at = _as_utc(row.expires_at)
+            if (
+                row.revoked_at is not None
+                or expires_at is None
+                or expires_at <= now
+            ):
+                return None
+            client = session.get(IdentityClientRow, row.identity_client_id)
+            tenant = session.get(TenantRow, row.tenant_id)
+            membership = session.get(MembershipRow, (row.tenant_id, row.user_id))
+            if (
+                client is None
+                or not client.active
+                or client.revoked_at is not None
+                or tenant is None
+                or tenant.status != "active"
+                or membership is None
+                or membership.status != "active"
+                or membership.role not in ROLES
+            ):
+                return None
+            row.last_seen_at = now
+            return UserSessionPrincipal(
+                tenant_id=row.tenant_id,
+                user_id=row.user_id,
+                role=membership.role,
+                session_id=row.id,
+                identity_client_id=row.identity_client_id,
+            )
+
+    def revoke_user_session(
+        self,
+        tenant_id: str,
+        session_id: str,
+        *,
+        actor: str = "system",
+    ) -> bool:
+        now = _utcnow()
+        with self._sessions.begin() as session:
+            row = session.scalar(
+                select(UserSessionRow).where(
+                    UserSessionRow.tenant_id == tenant_id,
+                    UserSessionRow.id == session_id,
+                )
+            )
+            if row is None:
+                return False
+            if row.revoked_at is None:
+                row.revoked_at = now
+                _audit(
+                    session,
+                    tenant_id,
+                    actor,
+                    "user_session.revoked",
+                    "user_session",
+                    session_id,
+                    {"user_id": row.user_id},
+                    now,
+                )
+            return True
+
+    def cleanup_expired_user_sessions(
+        self,
+        *,
+        before: datetime | None = None,
+    ) -> int:
+        cutoff = _normalize_expiry(before) if before is not None else _utcnow()
+        if cutoff is None:  # pragma: no cover - guarded by the expression above
+            raise AssertionError("session cleanup cutoff cannot be None")
+        with self._sessions.begin() as session:
+            result = session.execute(
+                delete(UserSessionRow).where(UserSessionRow.expires_at <= cutoff)
+            )
+            return int(result.rowcount or 0)
+
     def close(self) -> None:
         if self._owns_engine:
             self.engine.dispose()
@@ -425,6 +763,78 @@ def _parse_api_key(token: str) -> tuple[str | None, str | None]:
     if not 32 <= len(secret) <= 64:
         return None, None
     return prefix, secret
+
+
+def _parse_identity_client_key(token: str) -> tuple[str | None, str | None]:
+    if not isinstance(token, str) or len(token) > 128:
+        return None, None
+    prefix, separator, secret = token.partition(".")
+    if separator != "." or not _IDENTITY_CLIENT_PREFIX.fullmatch(prefix):
+        return None, None
+    if not 32 <= len(secret) <= 64:
+        return None, None
+    return prefix, secret
+
+
+def _normalize_client_name(name: str) -> str:
+    clean_name = name.strip() if isinstance(name, str) else ""
+    if not clean_name or len(clean_name) > 255:
+        raise ValueError("name must contain 1 to 255 characters")
+    return clean_name
+
+
+def _normalize_issuers(
+    issuers: tuple[str, ...] | list[str],
+) -> tuple[str, ...]:
+    result: list[str] = []
+    for issuer in issuers:
+        clean_issuer = issuer.strip() if isinstance(issuer, str) else ""
+        if not clean_issuer or len(clean_issuer) > 512:
+            raise ValueError("each issuer must contain 1 to 512 characters")
+        if clean_issuer not in result:
+            result.append(clean_issuer)
+    if not result:
+        raise ValueError("at least one issuer is required")
+    if len(result) > 16:
+        raise ValueError("an identity client can allow at most 16 issuers")
+    return tuple(result)
+
+
+def _new_identity_client(
+    *,
+    name: str,
+    allowed_issuers: tuple[str, ...],
+    rotated_from_id: str | None,
+    now: datetime,
+) -> tuple[IdentityClientRow, str]:
+    prefix = f"igb_{secrets.token_hex(12)}"
+    secret = secrets.token_urlsafe(32)
+    row = IdentityClientRow(
+        id=f"idc_{uuid.uuid4().hex}",
+        name=name,
+        key_prefix=prefix,
+        secret_hash=_hash_secret(secret),
+        allowed_issuers=list(allowed_issuers),
+        active=True,
+        rotated_from_id=rotated_from_id,
+        created_at=now,
+        updated_at=now,
+    )
+    return row, f"{prefix}.{secret}"
+
+
+def _hash_session_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _normalize_session_ttl(ttl_seconds: int) -> timedelta:
+    if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int):
+        raise ValueError("ttl_seconds must be an integer")
+    if not 1 <= ttl_seconds <= _MAX_SESSION_TTL_SECONDS:
+        raise ValueError(
+            f"ttl_seconds must be between 1 and {_MAX_SESSION_TTL_SECONDS}"
+        )
+    return timedelta(seconds=ttl_seconds)
 
 
 def _normalize_scopes(scopes: tuple[str, ...] | list[str]) -> tuple[str, ...]:
@@ -496,7 +906,23 @@ def _membership_record(row: MembershipRow) -> MembershipRecord:
         tenant_id=row.tenant_id,
         user_id=row.user_id,
         role=row.role,
+        status=row.status,
         created_at=_as_utc(row.created_at) or row.created_at,
+    )
+
+
+def _identity_client_record(row: IdentityClientRow) -> IdentityClientRecord:
+    return IdentityClientRecord(
+        id=row.id,
+        name=row.name,
+        key_prefix=row.key_prefix,
+        allowed_issuers=tuple(row.allowed_issuers or ()),
+        active=row.active,
+        rotated_from_id=row.rotated_from_id,
+        created_at=_as_utc(row.created_at) or row.created_at,
+        updated_at=_as_utc(row.updated_at) or row.updated_at,
+        last_used_at=_as_utc(row.last_used_at),
+        revoked_at=_as_utc(row.revoked_at),
     )
 
 
@@ -539,11 +965,18 @@ def _utcnow() -> datetime:
 
 __all__ = [
     "ApiKeyPrincipal",
+    "IDENTITY_CLIENT_SCOPES",
+    "IdentityClientPrincipal",
+    "IdentityClientRecord",
     "IssuedApiKey",
+    "IssuedIdentityClient",
+    "IssuedUserSession",
+    "MEMBERSHIP_STATUSES",
     "MembershipRecord",
     "ROLES",
     "SQLAlchemyIdentityRepository",
     "TENANT_STATUSES",
     "TenantRecord",
+    "UserSessionPrincipal",
     "UserRecord",
 ]
