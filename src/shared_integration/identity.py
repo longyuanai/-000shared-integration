@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Final
 
 from sqlalchemy import Engine, delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from shared_integration.db_models import (
@@ -251,30 +252,48 @@ class SQLAlchemyIdentityRepository:
             raise ValueError("display_name must contain at most 255 characters")
 
         now = _utcnow()
-        with self._sessions.begin() as session:
-            row = session.scalar(
-                select(UserRow).where(
-                    UserRow.issuer == clean_issuer,
-                    UserRow.subject == clean_subject,
+        try:
+            with self._sessions.begin() as session:
+                row = session.scalar(
+                    select(UserRow).where(
+                        UserRow.issuer == clean_issuer,
+                        UserRow.subject == clean_subject,
+                    )
                 )
-            )
-            if row is None:
-                row = UserRow(
-                    id=f"usr_{uuid.uuid4().hex}",
-                    issuer=clean_issuer,
-                    subject=clean_subject,
-                    email=email,
-                    display_name=display_name,
-                    created_at=now,
-                    updated_at=now,
+                if row is None:
+                    row = UserRow(
+                        id=f"usr_{uuid.uuid4().hex}",
+                        issuer=clean_issuer,
+                        subject=clean_subject,
+                        email=email,
+                        display_name=display_name,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    session.add(row)
+                else:
+                    row.email = email
+                    row.display_name = display_name
+                    row.updated_at = now
+                session.flush()
+            return _user_record(row)
+        except IntegrityError:
+            # A concurrent first exchange may win the issuer/subject unique insert.
+            # Re-read and apply this request's normalized profile after rollback.
+            with self._sessions.begin() as session:
+                row = session.scalar(
+                    select(UserRow).where(
+                        UserRow.issuer == clean_issuer,
+                        UserRow.subject == clean_subject,
+                    )
                 )
-                session.add(row)
-            else:
+                if row is None:  # pragma: no cover - database invariant
+                    raise
                 row.email = email
                 row.display_name = display_name
                 row.updated_at = now
-            session.flush()
-        return _user_record(row)
+                session.flush()
+            return _user_record(row)
 
     def set_membership(
         self,
@@ -353,6 +372,37 @@ class SQLAlchemyIdentityRepository:
         with self._sessions() as session:
             row = session.get(MembershipRow, (tenant_id, user_id))
             return _membership_record(row) if row is not None else None
+
+    def record_auth_event(
+        self,
+        *,
+        tenant_id: str,
+        actor: str,
+        action: str,
+        outcome: str,
+        request_id: str | None,
+        details: dict[str, object] | None = None,
+    ) -> bool:
+        """Persist a secret-free authentication event for an existing tenant."""
+        if outcome not in {"success", "failure"}:
+            raise ValueError("outcome must be success or failure")
+        now = _utcnow()
+        with self._sessions.begin() as session:
+            if session.get(TenantRow, tenant_id) is None:
+                return False
+            _audit(
+                session,
+                tenant_id,
+                actor[:255],
+                action,
+                "authentication",
+                None,
+                dict(details or {}),
+                now,
+                request_id=request_id,
+                outcome=outcome,
+            )
+        return True
 
     def issue_api_key(
         self,
@@ -517,11 +567,11 @@ class SQLAlchemyIdentityRepository:
         self,
         token: str,
         *,
-        issuer: str,
+        issuer: str | None = None,
     ) -> IdentityClientPrincipal | None:
         prefix, secret = _parse_identity_client_key(token)
-        clean_issuer = issuer.strip() if isinstance(issuer, str) else ""
-        if prefix is None or secret is None or not clean_issuer:
+        clean_issuer = issuer.strip() if isinstance(issuer, str) else None
+        if prefix is None or secret is None or (issuer is not None and not clean_issuer):
             return None
         now = _utcnow()
         with self._sessions.begin() as session:
@@ -535,7 +585,10 @@ class SQLAlchemyIdentityRepository:
             if (
                 not row.active
                 or row.revoked_at is not None
-                or clean_issuer not in tuple(row.allowed_issuers or ())
+                or (
+                    clean_issuer is not None
+                    and clean_issuer not in tuple(row.allowed_issuers or ())
+                )
             ):
                 return None
             row.last_used_at = now
@@ -566,6 +619,7 @@ class SQLAlchemyIdentityRepository:
         user_id: str,
         ttl_seconds: int = _DEFAULT_SESSION_TTL_SECONDS,
         actor: str = "identity-exchange",
+        request_id: str | None = None,
     ) -> IssuedUserSession:
         ttl = _normalize_session_ttl(ttl_seconds)
         now = _utcnow()
@@ -615,6 +669,7 @@ class SQLAlchemyIdentityRepository:
                     "expires_at": expires_at.isoformat(),
                 },
                 now,
+                request_id=request_id,
             )
         return IssuedUserSession(
             id=row.id,
@@ -674,6 +729,7 @@ class SQLAlchemyIdentityRepository:
         session_id: str,
         *,
         actor: str = "system",
+        request_id: str | None = None,
     ) -> bool:
         now = _utcnow()
         with self._sessions.begin() as session:
@@ -696,6 +752,7 @@ class SQLAlchemyIdentityRepository:
                     session_id,
                     {"user_id": row.user_id},
                     now,
+                    request_id=request_id,
                 )
             return True
 
@@ -935,6 +992,9 @@ def _audit(
     resource_id: str | None,
     details: dict[str, object],
     now: datetime,
+    *,
+    request_id: str | None = None,
+    outcome: str = "success",
 ) -> None:
     session.add(
         AuditEventRow(
@@ -944,7 +1004,8 @@ def _audit(
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
-            outcome="success",
+            request_id=request_id,
+            outcome=outcome,
             details=details,
             created_at=now,
         )

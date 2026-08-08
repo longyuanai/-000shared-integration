@@ -18,7 +18,11 @@ from shared_integration.adapters import (
     VulnAdapter,
 )
 from shared_integration.api_v1 import install_v1_routes
-from shared_integration.auth import TenantRBACMiddleware, load_principals
+from shared_integration.auth import (
+    TenantRBACMiddleware,
+    load_exchange_rate_limiter,
+    load_principals,
+)
 from shared_integration.correlations import SameHostMultiSourceRule
 from shared_integration.dispatch import (
     CeleryJobDispatcher,
@@ -123,18 +127,6 @@ def build_app(
             dispatcher = CeleryJobDispatcher()
         else:
             raise RuntimeError("INTEGRATION_JOB_MODE must be 'inline' or 'celery'")
-    application = gateway.app
-    application.state.gateway = gateway
-    application.state.registry = gateway.registry
-    application.state.job_repository = jobs
-    application.state.job_dispatcher = dispatcher
-    application.state.job_executor = executor
-    install_v1_routes(
-        application,
-        gateway=gateway,
-        repository=jobs,
-        dispatcher=dispatcher,
-    )
     auth_backend = os.getenv("INTEGRATION_AUTH_BACKEND", "static").strip().lower()
     if auth_backend not in {"static", "database", "hybrid"}:
         raise RuntimeError(
@@ -153,12 +145,31 @@ def build_app(
         if auth_backend in {"static", "hybrid"}
         else {}
     )
+    application = gateway.app
+    application.state.gateway = gateway
+    application.state.registry = gateway.registry
+    application.state.job_repository = jobs
+    application.state.job_dispatcher = dispatcher
+    application.state.job_executor = executor
     application.state.identity_repository = identity_repository
+    application.state.exchange_rate_limiter = load_exchange_rate_limiter()
+    install_v1_routes(
+        application,
+        gateway=gateway,
+        repository=jobs,
+        dispatcher=dispatcher,
+        identity_repository=identity_repository,
+        exchange_rate_limiter=application.state.exchange_rate_limiter,
+    )
     application.add_middleware(
         TenantRBACMiddleware,
         principals=principals,
         authenticator=(
-            identity_repository.authenticate_api_key
+            lambda token: (
+                identity_repository.authenticate_user_session(token)
+                if token.startswith("igs_")
+                else identity_repository.authenticate_api_key(token)
+            )
             if identity_repository is not None
             else None
         ),

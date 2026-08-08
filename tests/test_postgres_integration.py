@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 from shared_llm_core import Finding, FindingSeverity, FindingSource
 from sqlalchemy import delete, func, select, update
@@ -22,6 +24,7 @@ from shared_integration.db_models import (
     UserSessionRow,
 )
 from shared_integration.finding_lifecycle import SQLAlchemyTenantFindingRegistry
+from shared_integration.gateway import build_app
 from shared_integration.identity import SQLAlchemyIdentityRepository
 from shared_integration.jobs import JobStatus, SQLiteJobRepository
 from shared_integration.migration_tools import LegacySQLiteMigrator, MigrationCounts
@@ -230,6 +233,124 @@ def test_postgres_concurrent_identity_session_issue_and_revalidation() -> None:
             )
             assert remaining == 0
     finally:
+        with Session(engine) as session, session.begin():
+            session.execute(delete(TenantRow).where(TenantRow.id == tenant_id))
+            if user_id is not None:
+                session.execute(delete(UserRow).where(UserRow.id == user_id))
+            if client_id is not None:
+                session.execute(
+                    delete(IdentityClientRow).where(IdentityClientRow.id == client_id)
+                )
+        identity.close()
+        engine.dispose()
+
+
+def test_postgres_concurrent_http_exchange_and_immediate_revocation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database_url = _postgres_url()
+    suffix = uuid.uuid4().hex[:12]
+    tenant_id = f"http-identity-{suffix}"
+    issuer = "https://identity.example.test"
+    engine = create_database_engine(database_url)
+    identity = SQLAlchemyIdentityRepository(database_url)
+    user_id: str | None = None
+    client_id: str | None = None
+    app = None
+
+    monkeypatch.setenv("INTEGRATION_AUTH_BACKEND", "database")
+    monkeypatch.setenv("INTEGRATION_AUTH_REQUIRED", "true")
+    monkeypatch.setenv("INTEGRATION_AUTH_EXCHANGE_RATE_LIMIT", "100")
+    monkeypatch.delenv("INTEGRATION_AUTH_TOKENS", raising=False)
+    try:
+        identity.create_tenant(
+            tenant_id=tenant_id,
+            slug=tenant_id,
+            name="Concurrent HTTP Identity Tenant",
+        )
+        user = identity.upsert_user(
+            issuer=issuer,
+            subject=f"http-subject-{suffix}",
+        )
+        user_id = user.id
+        identity.set_membership(
+            tenant_id=tenant_id,
+            user_id=user.id,
+            role="analyst",
+        )
+        client = identity.issue_identity_client(
+            name=f"HTTP BFF {suffix}",
+            allowed_issuers=[issuer],
+        )
+        client_id = client.record.id
+        app = build_app(
+            tmp_path,
+            database_url=database_url,
+            identity_repository=identity,
+        )
+
+        async def exchange() -> httpx.Response:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as http_client:
+                return await http_client.post(
+                    "/v1/auth/exchange",
+                    headers={"Authorization": f"Bearer {client.token}"},
+                    json={
+                        "issuer": issuer,
+                        "subject": user.subject,
+                        "requested_tenant_id": tenant_id,
+                    },
+                )
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            responses = list(pool.map(lambda _: asyncio.run(exchange()), range(24)))
+        assert {response.status_code for response in responses} == {200}
+        tokens = [response.json()["session_token"] for response in responses]
+        assert len(set(tokens)) == 24
+
+        async def protected(method: str, path: str, token: str) -> httpx.Response:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as http_client:
+                return await http_client.request(
+                    method,
+                    path,
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={} if method == "POST" else None,
+                )
+
+        assert (
+            asyncio.run(protected("POST", "/v0.5/unknown/scan", tokens[0])).status_code
+            == 404
+        )
+        identity.set_membership(
+            tenant_id=tenant_id,
+            user_id=user.id,
+            role="viewer",
+        )
+        assert (
+            asyncio.run(protected("POST", "/v0.5/unknown/scan", tokens[0])).status_code
+            == 403
+        )
+        identity.set_membership_status(
+            tenant_id=tenant_id,
+            user_id=user.id,
+            status="suspended",
+        )
+        assert (
+            asyncio.run(protected("GET", "/v0.5/findings", tokens[0])).status_code
+            == 401
+        )
+    finally:
+        if app is not None:
+            app.state.job_repository.close()
+            app.state.registry.close()
         with Session(engine) as session, session.begin():
             session.execute(delete(TenantRow).where(TenantRow.id == tenant_id))
             if user_id is not None:

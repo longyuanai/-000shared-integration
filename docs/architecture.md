@@ -139,21 +139,25 @@ flowchart LR
 | Worker | Celery 5 + Valkey | 借鉴 DefectDojo/IntelOwl；提供重试、超时、调度和队列路由 |
 | Database | PostgreSQL 16+、SQLAlchemy 2、Alembic | 结构化查询、事务和迁移；保留 Repository 抽象 |
 | Artifact | S3 API；本地开发可用 MinIO | 样本、固件和报告不进入数据库 |
-| Identity | OIDC 用户登录 + 哈希化 scoped API Key | 用户和机器身份分开；JWT 短期有效 |
+| Identity | BFF/OIDC 身份交换 + 哈希化 scoped API Key | 用户和机器身份分开；用户侧使用可撤销的短时不透明会话 |
 | Events | 先使用 Valkey Pub/Sub + SSE | 浏览器仍只连接 Dashboard；后续可替换为持久化 Stream |
 | Observability | JSON 日志、Prometheus 指标、OpenTelemetry trace | 所有事件带 request/job/tenant/source ID |
 | Deployment | OCI 镜像 + Docker Compose 单节点 | 达到容量门槛后再水平扩展或上 K8s |
 
 ## 7. 核心数据模型
 
-所有业务表必须显式包含 `tenant_id`，所有唯一约束必须考虑租户边界。
+所有租户业务表必须显式包含 `tenant_id`，所有唯一约束必须考虑租户边界。Gateway 级
+`User` 与 `IdentityClient` 不绑定单一租户，必须分别通过 Membership 与 UserSession 进入
+租户授权边界。
 
 | 实体 | 关键字段 |
 |---|---|
 | Tenant | `id`, `slug`, `name`, `status`, `retention_days` |
 | User | `id`, `issuer`, `subject`, `email`, `display_name` |
-| Membership | `tenant_id`, `user_id`, `role` |
+| Membership | `tenant_id`, `user_id`, `role`, `status` |
 | ApiKey | `tenant_id`, `key_prefix`, `secret_hash`, `role`, `scopes`, `expires_at`, `revoked_at` |
+| IdentityClient | `id`, `key_prefix`, `secret_hash`, `allowed_issuers`, `active`, `rotated_from_id`, `last_used_at`, `revoked_at` |
+| UserSession | `id`, `token_hash`, `user_id`, `tenant_id`, `identity_client_id`, `expires_at`, `last_seen_at`, `revoked_at` |
 | Job | `tenant_id`, `source`, `status`, `queue`, `input`, `progress`, `timeout_at`, `created_by`, `idempotency_key` |
 | JobEvent | `tenant_id`, `job_id`, `sequence`, `kind`, `payload`, `created_at` |
 | Artifact | `tenant_id`, `sha256`, `size`, `media_type`, `storage_key`, `created_by` |
@@ -185,6 +189,8 @@ flowchart LR
 | `PATCH` | `/v1/findings/{finding_id}` | analyst/admin | 分派、确认、关闭、误报 |
 | `GET` | `/v1/correlations` | viewer+ | 跨产品关联查询 |
 | `POST` | `/v1/artifacts` | analyst/admin | 预签名上传或受控上传 |
+| `POST` | `/v1/auth/exchange` | identity bridge | 标准化 BFF 身份交换为短时租户会话 |
+| `POST` | `/v1/auth/session/revoke` | user session / owning bridge | 撤销当前会话或所属 bridge 会话 |
 | `GET` | `/livez` | public | 仅判断 API 进程存活 |
 | `GET` | `/readyz` | platform | 检查数据库、队列和 Worker |
 | `GET` | `/v1/admin/health` | admin | 详细产品/Worker 健康信息 |
@@ -243,8 +249,10 @@ class ProductAdapter(Protocol):
 
 ### 10.2 防线
 
-1. Dashboard/BFF 从可信 OIDC 会话获得用户身份。
-2. Gateway 根据 Membership 计算租户和角色，不信任浏览器提交的 `tenant_id`。
+1. Dashboard/BFF 从可信 Hosting/OIDC 会话获得用户身份，并使用独立 `igb_` bridge
+   credential 调用身份交换；提供方令牌不转发给 Gateway。
+2. Gateway 只把 `requested_tenant_id` 当请求，依据 active Tenant/Membership 计算租户和
+   角色，不接受客户端 role/scopes；`igs_` 会话每次请求都重新读取 Membership。
 3. Repository 层所有方法必须接收显式 tenant，不允许无租户查询。
 4. PostgreSQL 可在多实例阶段增加 RLS 作为第二道防线。
 5. API Key 只保存哈希和前缀，支持 scope、过期、轮换和吊销。
@@ -309,7 +317,8 @@ HTTPS Ingress
 > 哈希 API Key 及数据库 RBAC。备份/恢复实演、真实 PostgreSQL 并发和全量测试
 > 已本地通过并推送；workflow refs 已改为从 suite lock 解析，替代 suite CI run
 > `31267714152` 全部通过，M2 发布门禁关闭。OIDC/BFF 身份边界见 core `ADR-003`，
-> 实施派活 `009-M3-AUTH` 已解锁。
+> 实施派活 `009-M3-AUTH` 已解锁；`AUTH-DATA-001` 已通过候选 suite CI，
+> `AUTH-HTTP-001` 已完成本地与真实 PostgreSQL 验证，Web cookie/OIDC 迁移尚未开始。
 
 ### M0：契约与迁移准备
 
@@ -380,5 +389,5 @@ HTTPS Ingress
 
 ## 16. 下一步
 
-完成 M2 剩余门禁：执行备份恢复实机演练和 PostgreSQL 高并发测试。随后进入
-M3 的 OIDC/BFF、真实 Dashboard 工作流和 Playwright 多租户/RBAC E2E。
+继续执行 M3 的 `UI-SESSION-001`：把 Dashboard 用户路径迁移到安全 cookie 和 Gateway
+短时会话；随后运行真实 Dashboard 工作流与 Playwright 多租户/RBAC E2E。

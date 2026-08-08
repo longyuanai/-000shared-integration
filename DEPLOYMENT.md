@@ -68,7 +68,11 @@ Production hosting must provide:
 
 - an HTTPS service URL and port injection through `PORT`;
 - persistent PostgreSQL and Valkey volumes with tested backups;
-- `INTEGRATION_AUTH_BACKEND=database` and persistent, rotated API keys;
+- `INTEGRATION_AUTH_BACKEND=database`, persistent rotated API keys, and a
+  separately managed identity bridge credential for each BFF deployment;
+- explicit exchange limits through `INTEGRATION_AUTH_EXCHANGE_RATE_LIMIT` and
+  `INTEGRATION_AUTH_EXCHANGE_RATE_WINDOW_SECONDS`, plus a shared edge limit when
+  more than one Gateway instance is active;
 - private Valkey access, never exposed to the public network;
 - liveness probes against `/livez` and authenticated readiness probes against
   `/readyz`;
@@ -133,6 +137,7 @@ drill date. Perform the drill before every schema release and at least monthly.
 
 After deployment, set the dashboard's server-side `GATEWAY_URL` to the HTTPS
 origin and use a server-side credential only. Never expose a token as a
-`NEXT_PUBLIC_*` variable. Persistent machine API keys are available now. M3
-will replace the shared Dashboard credential with OIDC/BFF user context backed
-by Membership roles.
+`NEXT_PUBLIC_*` variable. Gateway now accepts both persistent machine API keys
+and short-lived `igs_` user sessions exchanged by an `igb_` BFF client. The
+Dashboard cookie/OIDC migration remains in `UI-SESSION-001`; until that ships,
+do not expose either credential class to browser JavaScript.

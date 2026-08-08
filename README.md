@@ -14,6 +14,9 @@ model, API, RBAC, deployment topology, and M0–M5 implementation plan are in
 - six subprocess-isolated product adapters;
 - persistent, scrypt-hashed API keys with tenant status, expiry, revocation,
   scopes, and `viewer`/`analyst`/`admin` roles;
+- separately hashed identity bridge clients plus five-minute opaque user sessions;
+- BFF identity exchange, self/bridge session revocation, per-request Membership
+  revalidation, request IDs, generic auth errors, and exchange rate limiting;
 - Tenant/User/Membership persistence plus a bootstrap and migration CLI;
 - PostgreSQL/SQLAlchemy persistence with Alembic migrations and explicit tenant keys;
 - Finding fingerprint deduplication, lifecycle status, assignment, audit, and cursor paging;
@@ -47,6 +50,8 @@ The gateway listens on port `8080` and exposes:
 - `GET /v1/findings`
 - `PATCH /v1/findings/{finding_id}`
 - `GET /v1/adapters`
+- `POST /v1/auth/exchange`
+- `POST /v1/auth/session/revoke`
 - `GET /livez` and authenticated `GET /readyz`
 
 Example health check:
@@ -71,6 +76,11 @@ shared-integration-admin api-key-issue --tenant longyuan --role admin --scope "g
 `INTEGRATION_AUTH_BACKEND=hybrid` accepts both persistent keys and the legacy
 `INTEGRATION_AUTH_TOKENS`; use it only as a rotation bridge. See
 [DEPLOYMENT.md](DEPLOYMENT.md) for SQLite migration and backup/restore steps.
+
+`INTEGRATION_AUTH_EXCHANGE_RATE_LIMIT` defaults to 20 attempts per
+`INTEGRATION_AUTH_EXCHANGE_RATE_WINDOW_SECONDS` (default 60). The limiter keys on
+the non-secret bridge prefix and client address; multi-instance production must
+place an equivalent shared edge limit in front of the Gateway.
 
 ## Container deployment
 
