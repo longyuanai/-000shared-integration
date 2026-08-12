@@ -107,6 +107,31 @@ def test_api_key_expiry_and_tenant_status_are_enforced(
         identity.issue_api_key(tenant_id="tenant-a", role="admin")
 
 
+def test_list_api_keys_is_tenant_scoped(
+    identity: SQLAlchemyIdentityRepository,
+) -> None:
+    for tenant_id in ("tenant-a", "tenant-b"):
+        identity.create_tenant(
+            tenant_id=tenant_id,
+            slug=tenant_id,
+            name=tenant_id.title(),
+        )
+    first = identity.issue_api_key(
+        tenant_id="tenant-a",
+        role="viewer",
+        scopes=["gateway:read"],
+    )
+    second = identity.issue_api_key(tenant_id="tenant-b", role="admin")
+
+    tenant_a = identity.list_api_keys("tenant-a")
+    tenant_b = identity.list_api_keys("tenant-b")
+
+    assert [record.id for record in tenant_a] == [first.id]
+    assert [record.id for record in tenant_b] == [second.id]
+    assert tenant_a[0].key_prefix == first.token.partition(".")[0]
+    assert not hasattr(tenant_a[0], "secret_hash")
+
+
 def test_users_and_memberships_are_tenant_scoped(
     identity: SQLAlchemyIdentityRepository,
 ) -> None:

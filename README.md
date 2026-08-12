@@ -91,6 +91,20 @@ shared-integration-admin tenant-create --tenant longyuan --slug longyuan --name 
 shared-integration-admin api-key-issue --tenant longyuan --role admin --scope "gateway:*"
 ```
 
+Rotate a machine API key without querying PostgreSQL by hand. Issue the
+replacement, list the tenant inventory to resolve each non-secret prefix to its
+database `id`, update the consumer, then revoke the previous `id`:
+
+```powershell
+shared-integration-admin api-key-issue --tenant longyuan --role admin --scope "gateway:*"
+shared-integration-admin api-key-list --tenant longyuan
+shared-integration-admin api-key-revoke --tenant longyuan --api-key key_<id>
+```
+
+`api-key-list` omits revoked records unless `--include-revoked` is supplied. It
+prints only `id`, `key_prefix`, `role`, `scopes`, `created_at`, and `revoked_at`;
+it never returns a token or `secret_hash`.
+
 `INTEGRATION_AUTH_BACKEND=hybrid` accepts both persistent keys and the legacy
 `INTEGRATION_AUTH_TOKENS`; use it only as a rotation bridge. See
 [DEPLOYMENT.md](DEPLOYMENT.md) for SQLite migration and backup/restore steps.

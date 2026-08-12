@@ -11,6 +11,7 @@ from typing import Any
 
 from shared_integration.identity import (
     ROLES,
+    ApiKeyRecord,
     IdentityClientRecord,
     SQLAlchemyIdentityRepository,
 )
@@ -117,6 +118,18 @@ def main(argv: Sequence[str] | None = None) -> None:
                 actor=arguments.actor,
             )
             _print({"id": arguments.api_key, "revoked": revoked})
+        elif arguments.command == "api-key-list":
+            _print(
+                {
+                    "api_keys": [
+                        _api_key_payload(record)
+                        for record in repository.list_api_keys(
+                            arguments.tenant,
+                            include_revoked=arguments.include_revoked,
+                        )
+                    ]
+                }
+            )
         elif arguments.command == "identity-client-create":
             issued = repository.issue_identity_client(
                 name=arguments.name,
@@ -220,6 +233,10 @@ def _parser() -> argparse.ArgumentParser:
     key_revoke.add_argument("--api-key", required=True)
     _actor_argument(key_revoke)
 
+    key_list = commands.add_parser("api-key-list")
+    key_list.add_argument("--tenant", required=True)
+    key_list.add_argument("--include-revoked", action="store_true")
+
     client_create = commands.add_parser("identity-client-create")
     client_create.add_argument("--name", required=True)
     client_create.add_argument("--issuer", action="append", required=True)
@@ -284,6 +301,17 @@ def _identity_client_payload(record: IdentityClientRecord) -> dict[str, Any]:
         "last_used_at": (
             record.last_used_at.isoformat() if record.last_used_at else None
         ),
+        "revoked_at": record.revoked_at.isoformat() if record.revoked_at else None,
+    }
+
+
+def _api_key_payload(record: ApiKeyRecord) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "key_prefix": record.key_prefix,
+        "role": record.role,
+        "scopes": list(record.scopes),
+        "created_at": record.created_at.isoformat(),
         "revoked_at": record.revoked_at.isoformat() if record.revoked_at else None,
     }
 

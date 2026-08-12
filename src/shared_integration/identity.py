@@ -94,6 +94,18 @@ class IssuedApiKey:
 
 
 @dataclass(frozen=True)
+class ApiKeyRecord:
+    """Secret-free metadata returned by tenant-scoped key inventory."""
+
+    id: str
+    key_prefix: str
+    role: str
+    scopes: tuple[str, ...]
+    created_at: datetime
+    revoked_at: datetime | None
+
+
+@dataclass(frozen=True)
 class IdentityClientRecord:
     id: str
     name: str
@@ -483,6 +495,24 @@ class SQLAlchemyIdentityRepository:
                 scopes=tuple(row.scopes or ()),
                 api_key_id=row.id,
             )
+
+    def list_api_keys(
+        self,
+        tenant_id: str,
+        *,
+        include_revoked: bool = False,
+    ) -> tuple[ApiKeyRecord, ...]:
+        """List secret-free API-key metadata within one tenant boundary."""
+
+        _validate_identifier(tenant_id, "tenant_id")
+        with self._sessions() as session:
+            statement = select(ApiKeyRow).where(ApiKeyRow.tenant_id == tenant_id)
+            if not include_revoked:
+                statement = statement.where(ApiKeyRow.revoked_at.is_(None))
+            rows = session.scalars(
+                statement.order_by(ApiKeyRow.created_at, ApiKeyRow.id)
+            ).all()
+            return tuple(_api_key_record(row) for row in rows)
 
     def revoke_api_key(
         self,
@@ -965,6 +995,17 @@ def _membership_record(row: MembershipRow) -> MembershipRecord:
         role=row.role,
         status=row.status,
         created_at=_as_utc(row.created_at) or row.created_at,
+    )
+
+
+def _api_key_record(row: ApiKeyRow) -> ApiKeyRecord:
+    return ApiKeyRecord(
+        id=row.id,
+        key_prefix=row.key_prefix,
+        role=row.role,
+        scopes=tuple(row.scopes or ()),
+        created_at=_as_utc(row.created_at) or row.created_at,
+        revoked_at=_as_utc(row.revoked_at),
     )
 
 
