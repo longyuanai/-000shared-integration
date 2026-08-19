@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from typing import Any, ClassVar, Literal
 
 from shared_llm_core import Finding, FindingSource
 from shared_llm_core import ProductAdapter as CoreProductAdapter
+from shared_llm_core.telemetry import span, trace_context_environment
 
 AdapterQueue = Literal["fast", "analysis", "sandbox"]
 
@@ -125,32 +127,54 @@ class JSONSubprocessAdapter(ProductAdapter):
         self._semaphore = asyncio.Semaphore(self._max_concurrency)
 
     async def scan(self, payload: dict[str, Any]) -> AsyncIterator[Finding]:
-        if not self._cli.is_dir():
-            raise ProductUnavailableError(f"{self.product_id} CLI directory is unavailable")
+        with span(
+            "gateway.product_cli",
+            attributes={"gateway.product_id": self.product_id},
+        ) as product_span:
+            started = time.perf_counter()
+            try:
+                if not self._cli.is_dir():
+                    raise ProductUnavailableError(
+                        f"{self.product_id} CLI directory is unavailable"
+                    )
 
-        payload_path = self._write_payload(payload)
-        try:
-            async with self._semaphore:
-                decoded = await self._execute(payload_path)
-        finally:
-            payload_path.unlink(missing_ok=True)
+                payload_path = self._write_payload(payload)
+                try:
+                    async with self._semaphore:
+                        decoded = await self._execute(payload_path)
+                finally:
+                    payload_path.unlink(missing_ok=True)
 
-        items = decoded if isinstance(decoded, list) else decoded.get("findings", [])
-        if not isinstance(items, list):
-            raise ProductCLIError(f"{self.product_id} CLI 'findings' must be a list")
+                items = decoded if isinstance(decoded, list) else decoded.get("findings", [])
+                if not isinstance(items, list):
+                    raise ProductCLIError(
+                        f"{self.product_id} CLI 'findings' must be a list"
+                    )
 
-        for item in items:
-            if not isinstance(item, dict):
-                raise ProductCLIError(f"{self.product_id} CLI finding must be an object")
-            normalized = {
-                **item,
-                "id": item.get("id", ""),
-                "source": self.source.value,
-                "severity": item.get("severity", "medium"),
-                "confidence": item.get("confidence", 0.5),
-                "title": item.get("title", "Untitled finding"),
-            }
-            yield Finding.from_dict(normalized)
+                for item in items:
+                    if not isinstance(item, dict):
+                        raise ProductCLIError(
+                            f"{self.product_id} CLI finding must be an object"
+                        )
+                    normalized = {
+                        **item,
+                        "id": item.get("id", ""),
+                        "source": self.source.value,
+                        "severity": item.get("severity", "medium"),
+                        "confidence": item.get("confidence", 0.5),
+                        "title": item.get("title", "Untitled finding"),
+                    }
+                    yield Finding.from_dict(normalized)
+            except BaseException:
+                product_span.set_attribute("gateway.status", "error")
+                raise
+            else:
+                product_span.set_attribute("gateway.status", "ok")
+            finally:
+                product_span.set_attribute(
+                    "gateway.latency_ms",
+                    int((time.perf_counter() - started) * 1000),
+                )
 
     async def _execute(self, payload_path: Path) -> list[Any] | dict[str, Any]:
         env = os.environ.copy()
@@ -161,6 +185,7 @@ class JSONSubprocessAdapter(ProductAdapter):
             if current_pythonpath
             else product_src
         )
+        env.update(trace_context_environment())
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable,

@@ -20,6 +20,7 @@ from shared_integration.finding_lifecycle import FindingStatus
 from shared_integration.identity import SQLAlchemyIdentityRepository
 from shared_integration.jobs import JobRecord, JobStatus
 from shared_integration.repositories import JobRepository
+from shared_integration.tracing import set_gateway_job_id, set_gateway_product_id
 
 
 class ScanCreateRequest(BaseModel):
@@ -326,6 +327,8 @@ def install_v1_routes(
             payload=body.payload,
             idempotency_key=idempotency_key,
         )
+        set_gateway_job_id(job.id)
+        set_gateway_product_id(body.source.value)
         if created:
             try:
                 dispatch_id = dispatcher.submit(

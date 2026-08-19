@@ -40,6 +40,7 @@ from shared_integration.jobs import SQLiteJobRepository
 from shared_integration.persistence import SQLiteTenantFindingRegistry
 from shared_integration.repositories import JobRepository
 from shared_integration.sql_jobs import SQLAlchemyJobRepository
+from shared_integration.tracing import GatewayTracingMiddleware
 
 
 def suite_root() -> Path:
@@ -175,6 +176,7 @@ def build_app(
                 return identity_repository.authenticate_user_session(token)
             return identity_repository.authenticate_api_key(token)
 
+    application.add_middleware(GatewayTracingMiddleware)
     application.add_middleware(
         TenantRBACMiddleware,
         principals=principals,
