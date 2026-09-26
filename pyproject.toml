@@ -10,7 +10,9 @@ packages = [{ include = "shared_integration", from = "src" }]
 [tool.poetry.dependencies]
 python = "^3.11"
 shared-llm-core = { path = "../000shared-llm-core", develop = true }
-fastapi = ">=0.115,<1.0"
+# Match shared-llm-core's audited FastAPI line: 0.139.2+ resolves to a
+# Starlette release outside the vulnerable 0.46.x series.
+fastapi = ">=0.139.2,<0.140.0"
 uvicorn = ">=0.30,<1.0"
 httpx = ">=0.27,<0.28"
 celery = {extras = ["redis"], version = ">=5.4,<6.0"}
