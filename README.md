@@ -1,3 +1,5 @@
+> 当前三产品工作区与模块路径见 [总技术设计](../docs/TECHNICAL-OVERVIEW.md)。本仓继续作为共享基础设施；冻结包/API 契约不因目录重编号而变化，旧 dispatch 不自动扩大本轮任务。
+
 # shared-integration
 
 Integration gateway for the longyuanai AI Security Agent suite.
