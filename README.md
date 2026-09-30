@@ -132,3 +132,10 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for volume, secret, and dashboard wiring.
 ```powershell
 python -m pytest tests/ --basetemp=workspace/pytest-current -q -o addopts=
 ```
+
+GitHub Actions (`.github/workflows/ci.yml`) checks out this repository next to
+`longyuanai/000shared-llm-core` and runs two jobs: the full pytest suite plus
+`alembic upgrade head`/`alembic check` on a fresh SQLite file, and
+`alembic upgrade head`/`check`/`downgrade base`/`upgrade head` plus
+`tests/test_postgres_integration.py` against a PostgreSQL 16 service container.
+Locally the PostgreSQL tests skip unless `INTEGRATION_TEST_POSTGRES_URL` is set.
