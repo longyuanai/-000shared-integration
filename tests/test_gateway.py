@@ -63,6 +63,38 @@ def test_build_gateway_uses_flat_code_audit_checkout(tmp_path: Path) -> None:
     assert code_adapter._cli == (tmp_path / "004AI-Code-Audit").resolve()  # noqa: SLF001
 
 
+def test_build_gateway_prefers_three_product_layout(tmp_path: Path) -> None:
+    current = {
+        FindingSource.SOC: "001AI-Agent-Security-Lab/modules/soc-analysis",
+        FindingSource.VULN: "002AI-Code-Audit/modules/vulnerability-analysis",
+        FindingSource.LAB: "001AI-Agent-Security-Lab",
+        FindingSource.CODE: "002AI-Code-Audit",
+        FindingSource.REVERSE: "003AI-Firmware-Security-Agent/modules/reverse-analysis",
+        FindingSource.FIRMWARE: "003AI-Firmware-Security-Agent",
+    }
+    for relative in current.values():
+        (tmp_path / relative).mkdir(parents=True, exist_ok=True)
+
+    gateway = build_gateway(tmp_path)
+
+    for source, relative in current.items():
+        adapter = gateway._products[source]  # noqa: SLF001
+        assert adapter._cli == (tmp_path / relative).resolve()  # noqa: SLF001
+
+
+def test_build_gateway_falls_back_to_legacy_layout_per_capability(tmp_path: Path) -> None:
+    (tmp_path / "002AI-Code-Audit").mkdir()
+
+    gateway = build_gateway(tmp_path)
+
+    code_adapter = gateway._products[FindingSource.CODE]  # noqa: SLF001
+    vuln_adapter = gateway._products[FindingSource.VULN]  # noqa: SLF001
+    assert code_adapter._cli == (tmp_path / "002AI-Code-Audit").resolve()  # noqa: SLF001
+    assert vuln_adapter._cli == (  # noqa: SLF001
+        tmp_path / "002AI-Vulnerability-Agent"
+    ).resolve()
+
+
 def test_build_gateway_uses_finding_registry(tmp_path: Path) -> None:
     assert isinstance(build_gateway(tmp_path).registry, FindingRegistry)
 

@@ -51,6 +51,12 @@ def suite_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _capability_path(root: Path, current: str, legacy: str) -> Path:
+    """Resolve a capability in the new layout while supporting legacy checkouts."""
+    target = root / current
+    return target if target.is_dir() else root / legacy
+
+
 def build_gateway(
     root: Path | None = None,
     *,
@@ -71,15 +77,41 @@ def build_gateway(
     elif finding_registry is None and configured_database:
         finding_registry = SQLiteTenantFindingRegistry(configured_database)
     products = {
-        FindingSource.SOC: SOCAdapter(products_root / "001AI-SOC-Agent"),
-        FindingSource.VULN: VulnAdapter(products_root / "002AI-Vulnerability-Agent"),
-        FindingSource.LAB: LabAdapter(products_root / "003AI Agent安全靶场"),
-        FindingSource.CODE: CodeAdapter(products_root / "004AI-Code-Audit"),
+        FindingSource.SOC: SOCAdapter(
+            _capability_path(
+                products_root,
+                "001AI-Agent-Security-Lab/modules/soc-analysis",
+                "001AI-SOC-Agent",
+            )
+        ),
+        FindingSource.VULN: VulnAdapter(
+            _capability_path(
+                products_root,
+                "002AI-Code-Audit/modules/vulnerability-analysis",
+                "002AI-Vulnerability-Agent",
+            )
+        ),
+        FindingSource.LAB: LabAdapter(
+            _capability_path(
+                products_root,
+                "001AI-Agent-Security-Lab",
+                "003AI Agent安全靶场",
+            )
+        ),
+        FindingSource.CODE: CodeAdapter(
+            _capability_path(products_root, "002AI-Code-Audit", "004AI-Code-Audit")
+        ),
         FindingSource.REVERSE: ReverseAdapter(
-            products_root / "005AI-Reverse-Agent"
+            _capability_path(
+                products_root,
+                "003AI-Firmware-Security-Agent/modules/reverse-analysis",
+                "005AI-Reverse-Agent",
+            )
         ),
         FindingSource.FIRMWARE: FirmwareAdapter(
-            products_root / "006AI-Firmware-Security-Agent"
+            _capability_path(
+                products_root, "003AI-Firmware-Security-Agent", "006AI-Firmware-Security-Agent"
+            )
         ),
     }
     return IntegrationGateway(
